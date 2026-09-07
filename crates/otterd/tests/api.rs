@@ -7,6 +7,88 @@ use otterd::{router, AppState};
 use tower::ServiceExt;
 
 #[tokio::test]
+async fn directory_browser_requires_auth_and_lists_only_folders() {
+    use http_body_util::BodyExt;
+    use otter_core::git;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("folders");
+    std::fs::create_dir(&root).unwrap();
+    for name in ["repo space", ".hidden", "일반 폴더"] {
+        std::fs::create_dir(root.join(name)).unwrap();
+    }
+    std::fs::write(root.join("private.txt"), "never returned").unwrap();
+    git::run(&root.join("repo space"), &["init", "-b", "main"])
+        .await
+        .unwrap();
+    let db = Db::open(&temp.path().join("test.db")).await.unwrap();
+    let app = router(AppState::new(db, "token".into()), temp.path().into());
+    for (suffix, token, expected) in [
+        ("", "", StatusCode::UNAUTHORIZED),
+        ("", "Bearer token", StatusCode::OK),
+        ("&hidden=true", "Bearer token", StatusCode::OK),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/directories?path={}{}",
+                        root.display(),
+                        suffix
+                    ))
+                    .header("host", "localhost:4317")
+                    .header("authorization", token)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        if expected == StatusCode::OK {
+            let data: serde_json::Value =
+                serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                    .unwrap();
+            let entries = data["entries"].as_array().unwrap();
+            assert_eq!(entries.len(), if suffix.is_empty() { 2 } else { 3 });
+            assert!(entries.iter().all(|e| e["name"] != "private.txt"));
+            assert!(entries
+                .iter()
+                .any(|e| e["name"] == "repo space" && e["is_git"] == true));
+            assert!(data["git_root"].is_null());
+        }
+    }
+    for (path, expected) in [
+        ("repo%20space", StatusCode::OK),
+        ("absent", StatusCode::BAD_REQUEST),
+        ("private.txt", StatusCode::BAD_REQUEST),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/directories?path={}/{path}", root.display()))
+                    .header("host", "localhost:4317")
+                    .header("authorization", "Bearer token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        if expected == StatusCode::OK {
+            let data: serde_json::Value =
+                serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                    .unwrap();
+            assert_eq!(
+                data["git_root"],
+                root.join("repo space").to_string_lossy().as_ref()
+            );
+            assert_eq!(data["parent"], root.to_string_lossy().as_ref());
+        }
+    }
+}
+
+#[tokio::test]
 async fn project_rescan_uses_unit_base_and_associates_only_proven_history_links() {
     use otter_core::{git, work};
     use serde_json::json;

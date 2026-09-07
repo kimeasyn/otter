@@ -87,7 +87,7 @@ Windows/macOS 네이티브 패키지는 이 Linux 서버에서 만들지 않습�
 
 ## 첫 사용 순서
 
-1. **Projects**에서 초기 커밋이 있는 Git 저장소를 추가합니다.
+1. **Projects → Browse folders…**에서 초기 커밋이 있는 Git 저장소 폴더를 선택하고 **Add project**로 추가합니다. 직접 경로 입력도 가능합니다. 홈서버 브라우저 모드에서는 서버의 폴더를 탐색하며 파일을 업로드하지 않습니다.
 2. Workspace Map에서 현재 브랜치와 작업공간을 확인합니다.
 3. **New Work Unit**으로 작업 설명·기준 브랜치·새 worktree를 정합니다.
 4. 기본 FakeProvider 팀으로 **Start Planner** → 결과 확인 → **Start Builder** → **Start Reviewer**를 실행합니다.

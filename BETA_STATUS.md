@@ -61,7 +61,7 @@ See [Provider adapters](docs/PROVIDER_ADAPTERS.md) for exact options, sources an
 | Command                                                                       | Evidence                                                                                                                                                            |
 | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `./scripts/check`                                                             | Rust formatting, Clippy with warnings denied, TypeScript and ESLint passed                                                                                          |
-| `./scripts/test`                                                              | 14 Rust integration tests and 4 frontend tests passed                                                                                                               |
+| `./scripts/test`                                                              | 15 Rust integration tests and 4 frontend tests passed                                                                                                               |
 | `./scripts/e2e`                                                               | Chromium workflow, real Git map, PTY output/close, search focus, six history tabs, import idempotency and restart passed                                            |
 | `node scripts/smoke.mjs`                                                      | Native host API auth, serving, real Git, SIGKILL recovery, refreshed HEAD/dirty state, interrupted agent/session and token rotation passed                          |
 | `node scripts/history-smoke.mjs`                                              | One stable real Codex source: 34 raw / 12 normalized records, zero new records on reimport, unchanged source SHA-256 and paginated tabs; no private content printed |
@@ -72,6 +72,12 @@ Rust tests additionally exercise actual diverged temporary Git branches/worktree
 
 The expanded Chromium journey also passed profile save/add/edit/remove and
 case-insensitive addressing, stop and associated-session navigation.
+Repository selection now includes an authenticated folder explorer, with parent
+navigation, hidden folders, Git markers and cancellation. Rust verifies directory
+access authentication, files excluded from listings, hidden folders, spaces/Unicode
+names and invalid paths. Chromium verifies browse → select → register and cancellation
+without changing the entered path. In home-server mode the explorer lists server
+folders, not browser-client files; no directory upload is performed.
 `node scripts/release-smoke.mjs` passed actual archive extraction, native launcher,
 private URL, authenticated API, bundled JavaScript and shutdown cleanup.
 `./scripts/in-dev cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml -- -D warnings`

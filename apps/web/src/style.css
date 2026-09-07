@@ -175,6 +175,58 @@ main {
 .grow {
   flex: 1;
 }
+.repository-picker {
+  margin: auto;
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  color: #dce1e4;
+}
+.repository-picker::backdrop {
+  background: #000a;
+}
+.repository-picker h2 {
+  margin: 0;
+}
+.folder-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0;
+}
+.folder-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.folder-toolbar input {
+  width: auto;
+  margin: 0;
+}
+.folder-list {
+  min-height: 180px;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid #364045;
+  border-radius: 6px;
+  padding: 8px;
+}
+.folder-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  border-color: transparent;
+  background: transparent;
+  gap: 12px;
+}
+.folder-row > span:first-child {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
 .primary {
   background: #9bd9bb;
   border-color: #9bd9bb;

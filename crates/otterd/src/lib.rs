@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{path::PathBuf, sync::Arc};
 use subtle::ConstantTimeEq;
+pub mod directories;
 pub mod history;
 pub mod terminal;
 pub mod units;
@@ -113,6 +114,7 @@ pub fn router(state: AppState, web: PathBuf) -> Router {
             get(|| async { Json(json!({"name":"Otter","version":env!("CARGO_PKG_VERSION")})) }),
         )
         .route("/projects", get(projects).post(add_project))
+        .route("/directories", get(directories::browse))
         .route("/projects/{id}", get(project_detail))
         .route("/terminals/ws", get(terminal::upgrade))
         .route("/providers", get(history::providers_list))

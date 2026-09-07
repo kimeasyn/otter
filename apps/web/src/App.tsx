@@ -4,6 +4,7 @@ import { api, useAuth } from "./api";
 import { Sessions, SessionView, Search } from "./History";
 import { NewWorkUnit, WorkUnits, WorkUnitView, type Unit } from "./WorkUnits";
 import type { TerminalTarget } from "./Terminal";
+import { RepositoryPicker } from "./RepositoryPicker";
 const Terminal = lazy(() =>
   import("./Terminal").then((m) => ({ default: m.Terminal })),
 );
@@ -110,6 +111,7 @@ export function App() {
   const [inputToken, setInputToken] = useState("");
   const [selected, setSelected] = useState("");
   const [path, setPath] = useState("");
+  const [browseRepository, setBrowseRepository] = useState(false);
   const [selectedTree, setTree] = useState<Tree | null>(null);
   const [view, setView] = useState("projects");
   const [session, setSession] = useState("");
@@ -287,8 +289,8 @@ export function App() {
               <section className="panel">
                 <h2>Add a Git repository</h2>
                 <p className="muted">
-                  Enter an existing repository path on the machine running
-                  otterd.
+                  Choose a folder or enter an existing repository path on the
+                  machine running Otter.
                 </p>
                 <form
                   className="inline"
@@ -306,6 +308,12 @@ export function App() {
                       required
                     />
                   </label>
+                  <button
+                    type="button"
+                    onClick={() => setBrowseRepository(true)}
+                  >
+                    Browse folders…
+                  </button>
                   <button className="primary" disabled={add.isPending}>
                     Add project
                   </button>
@@ -314,6 +322,17 @@ export function App() {
                   <p className="error" role="alert">
                     {add.error.message}
                   </p>
+                )}
+                {browseRepository && (
+                  <RepositoryPicker
+                    initialPath={path}
+                    onClose={() => setBrowseRepository(false)}
+                    onSelect={(selectedPath) => {
+                      setPath(selectedPath);
+                      setBrowseRepository(false);
+                      add.reset();
+                    }}
+                  />
                 )}
               </section>
             )}

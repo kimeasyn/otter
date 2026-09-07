@@ -61,7 +61,48 @@ test("project, worktree, synthetic team workflow, history search and restart", a
     let connection = await start();
     await page.goto(`${connection.url}/#token=${connection.token}`);
     await expect(page.getByText("Local daemon connected")).toBeVisible();
-    await page.getByLabel("Repository path", { exact: true }).fill(repo);
+    await page.getByLabel("Repository path", { exact: true }).fill(temp);
+    await page
+      .getByRole("button", { name: "Browse folders…", exact: true })
+      .click();
+    const picker = page.getByRole("dialog", {
+      name: "Choose a Git repository",
+      exact: true,
+    });
+    await expect(picker).toBeVisible();
+    await expect(
+      picker.getByRole("button", { name: "Select repository", exact: true }),
+    ).toBeDisabled();
+    await picker
+      .getByRole("button", { name: "Open folder repo", exact: true })
+      .click();
+    await expect(
+      picker.getByLabel("Folder location", { exact: true }),
+    ).toHaveValue(repo);
+    await expect(
+      picker.getByRole("button", { name: "Select repository", exact: true }),
+    ).toBeEnabled();
+    await mkdir(resolve("../../artifacts/screenshots"), { recursive: true });
+    await page.screenshot({
+      path: resolve("../../artifacts/screenshots/repository-picker.png"),
+    });
+    await picker.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(
+      page.getByLabel("Repository path", { exact: true }),
+    ).toHaveValue(temp);
+    await page
+      .getByRole("button", { name: "Browse folders…", exact: true })
+      .click();
+    await picker
+      .getByRole("button", { name: "Open folder repo", exact: true })
+      .click();
+    await picker
+      .getByRole("button", { name: "Select repository", exact: true })
+      .click();
+    await expect(picker).toHaveCount(0);
+    await expect(
+      page.getByLabel("Repository path", { exact: true }),
+    ).toHaveValue(repo);
     await page
       .getByRole("button", { name: "Add project", exact: true })
       .click();
