@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+otter_release_dir="$(cd "$(dirname "$0")" && pwd)"
+export OTTER_WEB_DIR="$otter_release_dir/web"
+export OTTER_DATA_DIR="${OTTER_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/otter}"
+otter_print_url() {
+  if [ ! -f "$OTTER_DATA_DIR/connection.json" ]; then printf 'Otter is not running or connection details are unavailable.\n' >&2; return 1; fi
+  otter_url="$(sed -n 's/.*"url":"\([^"]*\)".*/\1/p' "$OTTER_DATA_DIR/connection.json")"
+  otter_token="$(sed -n 's/.*"token":"\([^"]*\)".*/\1/p' "$OTTER_DATA_DIR/connection.json")"
+  printf '%s/#token=%s\n' "$otter_url" "$otter_token"
+}
+if [ "${1:-}" = '--url' ]; then otter_print_url; exit; fi
+"$otter_release_dir/otterd" &
+otter_child_pid=$!
+trap 'kill -INT "$otter_child_pid" 2>/dev/null || true; wait "$otter_child_pid" 2>/dev/null || true' EXIT INT TERM
+for otter_attempt in {1..100}; do
+  if ! kill -0 "$otter_child_pid" 2>/dev/null; then wait "$otter_child_pid"; exit 1; fi
+  if [ -f "$OTTER_DATA_DIR/connection.json" ] && [ "$(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' "$OTTER_DATA_DIR/connection.json")" = "$otter_child_pid" ]; then
+    printf '\nOpen this private Otter URL (do not share):\n'
+    otter_print_url
+    break
+  fi
+  sleep 0.1
+done
+wait "$otter_child_pid"

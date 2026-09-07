@@ -221,7 +221,11 @@ pub async fn edit_agent(
         return Err(anyhow::anyhow!("Stop the agent before editing its profile").into());
     }
     let profile = work::save_profile(&s.db, &input).await?;
-    s.db.execute("UPDATE agent_instances SET profile_id=?,name=?,status='idle',result=NULL,error=NULL WHERE id=?",vec![profile["id"].clone(),input.name.into(),aid.into()]).await?;
+    let changed=sqlx::query("UPDATE agent_instances SET profile_id=?,name=?,status='idle',result=NULL,error=NULL WHERE id=? AND status NOT IN ('running','starting','stopping')")
+        .bind(profile["id"].as_str()).bind(input.name).bind(aid).execute(&s.db.0).await?;
+    if changed.rows_affected() != 1 {
+        return Err(anyhow::anyhow!("Agent started concurrently; stop it before editing").into());
+    }
     Ok(Json(profile))
 }
 pub async fn delete_agent(State(s): State<AppState>, Path(aid): Path<String>) -> ApiResult {
@@ -237,7 +241,14 @@ pub async fn delete_agent(State(s): State<AppState>, Path(aid): Path<String>) ->
         )
         .into());
     }
-    s.db.execute("DELETE FROM agent_instances WHERE id=?", vec![aid.into()])
-        .await?;
+    let deleted = sqlx::query(
+        "DELETE FROM agent_instances WHERE id=? AND status='idle' AND provider_session_id IS NULL",
+    )
+    .bind(aid)
+    .execute(&s.db.0)
+    .await?;
+    if deleted.rows_affected() != 1 {
+        return Err(anyhow::anyhow!("Agent state changed; refresh and retry").into());
+    }
     Ok(Json(json!({"removed":true,"at":now()})))
 }

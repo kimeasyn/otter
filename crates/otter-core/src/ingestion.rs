@@ -30,7 +30,12 @@ pub async fn ingest(db: &Db, provider: &str, path: &Path) -> Result<Value> {
         anyhow::bail!("This source file was already registered for a different provider");
     }
     let mut file = std::fs::File::open(&path)?;
-    let size = file.metadata()?.len();
+    let metadata = file.metadata()?;
+    let size = metadata.len();
+    let modified = metadata
+        .modified()
+        .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
+        .unwrap_or_else(|_| now());
     let mut offset = prior.and_then(|v| v["byte_offset"].as_u64()).unwrap_or(0);
     let mut sequence = prior.and_then(|v| v["sequence"].as_i64()).unwrap_or(0);
     let prefix = prior.and_then(|v| v["prefix_hash"].as_str()).unwrap_or("");
@@ -87,7 +92,24 @@ pub async fn ingest(db: &Db, provider: &str, path: &Path) -> Result<Value> {
     } else {
         vec![]
     };
-    let assoc = associations.first().cloned().unwrap_or(Value::Null);
+    let mut assoc = associations.first().cloned().unwrap_or(Value::Null);
+    if let Some(uid) = assoc["work_unit_id"].as_str() {
+        let unit = db
+            .one(
+                "SELECT created_at FROM work_units WHERE id=?",
+                vec![uid.into()],
+            )
+            .await?;
+        let session_time = meta["timestamp"]
+            .as_str()
+            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok());
+        let unit_time = unit["created_at"]
+            .as_str()
+            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok());
+        if !matches!((session_time,unit_time),(Some(s),Some(u)) if s>=u) {
+            assoc["work_unit_id"] = Value::Null;
+        }
+    }
     let project = if assoc["project_id"].is_null() {
         if let Some(cwd) = cwd {
             db.rows(
@@ -166,6 +188,20 @@ pub async fn ingest(db: &Db, provider: &str, path: &Path) -> Result<Value> {
             warnings += 1;
         }
         for event in events {
+            if event.kind == "user.message" {
+                let title = event
+                    .text
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .chars()
+                    .take(100)
+                    .collect::<String>();
+                if !title.is_empty() {
+                    sqlx::query("UPDATE provider_sessions SET title=? WHERE id=? AND title=? AND agent_id IS NULL")
+                        .bind(title).bind(&sid).bind(path.file_stem().unwrap_or_default().to_string_lossy().as_ref()).execute(&mut *tx).await?;
+                }
+            }
             sqlx::query("INSERT INTO normalized_events(session_id,raw_event_id,timestamp,kind,text,target,detail_json) VALUES(?,?,?,?,?,?,?)")
                 .bind(&sid).bind(raw.get::<i64,_>("id")).bind(timestamp).bind(&event.kind).bind(&event.text).bind(event.target).bind(event.detail.to_string()).execute(&mut *tx).await?;
             normalized += 1;
@@ -174,7 +210,7 @@ pub async fn ingest(db: &Db, provider: &str, path: &Path) -> Result<Value> {
     sqlx::query(
         "UPDATE provider_sessions SET last_seen_at=?,warning_count=warning_count+? WHERE id=?",
     )
-    .bind(now())
+    .bind(modified)
     .bind(warnings)
     .bind(&sid)
     .execute(&mut *tx)
@@ -182,6 +218,16 @@ pub async fn ingest(db: &Db, provider: &str, path: &Path) -> Result<Value> {
     sqlx::query("INSERT INTO ingestion_cursors(source_path,provider,session_id,byte_offset,sequence,prefix_hash,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(source_path) DO UPDATE SET byte_offset=excluded.byte_offset,sequence=excluded.sequence,prefix_hash=excluded.prefix_hash,updated_at=excluded.updated_at")
         .bind(&source).bind(provider).bind(&sid).bind(offset as i64).bind(sequence).bind(fingerprint).bind(now()).execute(&mut *tx).await?;
     tx.commit().await?;
+    if inserted > 0 {
+        tracing::info!(
+            provider,
+            inserted,
+            normalized,
+            warnings,
+            reset,
+            "Otter session batch ingested"
+        );
+    }
     Ok(
         json!({"session_id":sid,"inserted":inserted,"normalized":normalized,"warnings":warnings,"offset":offset,"size":size,"has_more":offset<size,"reset":reset}),
     )

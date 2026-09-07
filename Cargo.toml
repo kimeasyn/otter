@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/otter-core", "crates/otterd"]
+exclude = ["apps/desktop/src-tauri"]
 resolver = "2"
 
 [workspace.package]
@@ -26,4 +27,3 @@ debug = 0
 
 [profile.release]
 strip = true
-

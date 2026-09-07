@@ -108,3 +108,59 @@ async fn database_persists_searches_and_reconciles_after_restart() {
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn refuses_unrelated_sqlite_without_changing_its_contents() {
+    use sqlx::Connection;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("unrelated.db");
+    let mut connection = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true),
+    )
+    .await
+    .unwrap();
+    sqlx::query("CREATE TABLE unrelated(value TEXT)")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO unrelated VALUES('preserve this')")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    connection.close().await.unwrap();
+    let before = std::fs::read(&path).unwrap();
+    assert!(Db::open(&path).await.is_err());
+    assert_eq!(std::fs::read(path).unwrap(), before);
+}
+
+#[tokio::test]
+async fn paginated_history_and_fts_at_beta_event_volume() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Db::open(&temp.path().join("scale.db")).await.unwrap();
+    db.execute("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000) INSERT INTO provider_sessions(id,provider,external_session_id,title,started_at,last_seen_at,status) SELECT 's'||x,'fake','synthetic'||x,'Synthetic session '||x,'now','now','completed' FROM n", vec![]).await.unwrap();
+    db.execute("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<200000) INSERT INTO normalized_events(session_id,timestamp,kind,text,target) SELECT 's'||(1+(x%1000)),'now','assistant.message','Synthetic event '||x||CASE WHEN x=199999 THEN ' riverneedle' ELSE '' END,'src/example.rs' FROM n", vec![]).await.unwrap();
+    let started = std::time::Instant::now();
+    let page = db.rows("SELECT id,kind,text FROM normalized_events WHERE session_id='s1000' ORDER BY id LIMIT 100 OFFSET 100", vec![]).await.unwrap();
+    assert_eq!(page.len(), 100);
+    let found = db
+        .rows(
+            "SELECT session_id FROM search_index WHERE search_index MATCH 'riverneedle' LIMIT 100",
+            vec![],
+        )
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0]["session_id"], "s1000");
+    assert_eq!(
+        db.one("SELECT count(*) AS n FROM normalized_events", vec![])
+            .await
+            .unwrap()["n"],
+        200000
+    );
+    eprintln!(
+        "1000-session / 200000-event page + FTS + count checks: {:?}",
+        started.elapsed()
+    );
+}

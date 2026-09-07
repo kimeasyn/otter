@@ -335,7 +335,14 @@ pub async fn detect(name: &str) -> Value {
     let help = if version.is_some() {
         tokio::time::timeout(
             Duration::from_secs(5),
-            Command::new(&bin).arg("--help").kill_on_drop(true).output(),
+            Command::new(&bin)
+                .args(if name == "codex" {
+                    vec!["exec", "--help"]
+                } else {
+                    vec!["--help"]
+                })
+                .kill_on_drop(true)
+                .output(),
         )
         .await
         .ok()
@@ -346,12 +353,23 @@ pub async fn detect(name: &str) -> Value {
         String::new()
     };
     let one_shot = if name == "codex" {
-        help.contains("exec")
+        ["--json", "--ephemeral", "--sandbox", "--color"]
+            .iter()
+            .all(|flag| help.contains(flag))
     } else {
-        help.contains("--print") && help.contains("--output-format")
+        [
+            "--print",
+            "--output-format",
+            "--permission-mode",
+            "--tools",
+            "--verbose",
+            "--no-session-persistence",
+        ]
+        .iter()
+        .all(|flag| help.contains(flag))
     };
     json!({"id":name,"name":if name=="codex" {"Codex"}else{"Claude Code"},"available":version.is_some(),"version":version,"synthetic":false,
         "models":[],"executable":bin,"session_roots":session_roots(name),
         "capabilities":{"discovery":true,"one_shot":one_shot,"resume":false,"model_selection":help.contains("--model"),"permission_enforcement":name=="codex"&&help.contains("--sandbox"),"interactive":false},
-        "note":if version.is_none(){"CLI not detected. Session files can still be imported."}else{"Model availability depends on your provider account. Native session resume is not enabled in this beta adapter."}})
+        "note":if version.is_none(){"CLI not detected. Session files can still be imported."}else if !one_shot {"CLI detected but required safe structured-output flags were not found. Managed execution is disabled; history import remains available."}else{"Model availability depends on your provider account. Native session resume is not enabled in this beta adapter."}})
 }

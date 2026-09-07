@@ -110,7 +110,9 @@ pub async fn events(
             vec![id.into()],
         )
         .await?;
-    Ok(Json(json!({"items":rows,"total":total["n"]})))
+    Ok(Json(
+        json!({"items":rows,"total":total["n"],"offset":offset}),
+    ))
 }
 
 pub async fn search(State(s): State<AppState>, Query(p): Query<Page>) -> ApiResult {

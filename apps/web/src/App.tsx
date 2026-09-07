@@ -22,6 +22,8 @@ export type Tree = {
   ahead: number | null;
   behind: number | null;
   dirty: boolean;
+  base_branch?: string;
+  base_commit?: string | null;
   missing: boolean;
   warning: string | null;
   agents: { name: string; provider: string; status: string }[];
@@ -62,9 +64,24 @@ export function WorkspaceMap({
             key={tree.id}
             onClick={() => onSelect(tree)}
           >
-            <span className="branch">⑂ {tree.branch ?? "Detached HEAD"}</span>
+            <span className="branch">
+              ⑂ {tree.branch ?? "Detached HEAD"}
+              {tree.base_branch && tree.base_branch !== base && (
+                <small className="muted"> → {tree.base_branch}</small>
+              )}
+              {tree.warning && (
+                <span
+                  className="warning"
+                  title={tree.warning}
+                  aria-label={tree.warning}
+                >
+                  {" "}
+                  ⚠
+                </span>
+              )}
+            </span>
             <code>{tree.head.slice(0, 8)}</code>
-            <span>
+            <span className={tree.behind ? "warning" : undefined}>
               ↑{tree.ahead ?? "?"} ↓{tree.behind ?? "?"}
             </span>
             <span
@@ -349,6 +366,16 @@ export function App() {
                     <p>
                       HEAD <code>{tree.head}</code>
                     </p>
+                    <p>
+                      Base branch{" "}
+                      <code>
+                        {tree.base_branch ?? detail.data.project.base_branch}
+                      </code>
+                    </p>
+                    <p>
+                      Current base commit{" "}
+                      <code>{tree.base_commit ?? "Unknown"}</code>
+                    </p>
                     {tree.warning && <p className="warning">{tree.warning}</p>}
                     <h3>Changed files</h3>
                     {tree.changed_files.length ? (
@@ -359,7 +386,9 @@ export function App() {
                       ))
                     ) : (
                       <p className="muted">
-                        No changes relative to the base branch.
+                        {tree.missing || tree.warning
+                          ? "File activity unavailable or incomplete; inspect the warning above."
+                          : "No changes relative to the base branch."}
                       </p>
                     )}
                   </section>

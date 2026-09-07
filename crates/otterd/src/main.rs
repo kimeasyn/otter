@@ -23,11 +23,16 @@ async fn main() -> Result<()> {
                 .data_local_dir()
                 .to_path_buf()
         });
+    let existed = data.exists();
     fs::create_dir_all(&data)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&data, fs::Permissions::from_mode(0o700))?;
+        if !existed {
+            fs::set_permissions(&data, fs::Permissions::from_mode(0o700))?;
+        } else if fs::metadata(&data)?.permissions().mode() & 0o077 != 0 {
+            bail!("Otter requires a private data directory (mode 700). Choose a new OTTER_DATA_DIR; existing shared directory permissions were not changed.");
+        }
     }
     let lock = OpenOptions::new()
         .create(true)
@@ -50,6 +55,7 @@ async fn main() -> Result<()> {
     let db = Db::open(&data.join("otter.db")).await?;
     db.reconcile().await?;
     otter_core::work::seed_profiles(&db).await?;
+    tracing::info!("Otter database migrations and runtime reconciliation completed");
     let token = format!("{}{}", otter_core::id(), otter_core::id());
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
@@ -82,7 +88,17 @@ async fn main() -> Result<()> {
     let terminal_shutdown = state.terminal_shutdown.clone();
     axum::serve(listener, router(state, web))
         .with_graceful_shutdown(async move {
-            let _ = tokio::signal::ctrl_c().await;
+            #[cfg(unix)]
+            {
+                let mut term =
+                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                        .expect("SIGTERM handler");
+                tokio::select! {_=tokio::signal::ctrl_c()=>{},_=term.recv()=>{}}
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = tokio::signal::ctrl_c().await;
+            }
             let _ = terminal_shutdown.send(true);
             executor.shutdown().await;
         })

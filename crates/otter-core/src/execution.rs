@@ -21,6 +21,15 @@ impl Executor {
     }
 
     pub async fn start(&self, aid: &str, prompt: String) -> Result<Value> {
+        self.start_with_handoff(aid, prompt, None).await
+    }
+
+    async fn start_with_handoff(
+        &self,
+        aid: &str,
+        prompt: String,
+        handoff: Option<Value>,
+    ) -> Result<Value> {
         if prompt.trim().is_empty() || prompt.len() > 128000 {
             bail!("Agent request must contain 1–128,000 bytes");
         }
@@ -67,6 +76,17 @@ impl Executor {
         let sid = id();
         let process_id = id();
         let mut tx = self.db.0.begin().await?;
+        let downstream = if agent["role"] == "planner" {
+            vec!["builder", "reviewer"]
+        } else if agent["role"] == "builder" {
+            vec!["reviewer"]
+        } else {
+            vec![]
+        };
+        for role in downstream {
+            sqlx::query("UPDATE agent_instances SET status='idle',result=NULL,error=NULL WHERE work_unit_id=? AND profile_id IN (SELECT id FROM agent_profiles WHERE role=?)")
+                .bind(uid).bind(role).execute(&mut *tx).await?;
+        }
         sqlx::query("INSERT INTO provider_sessions(id,provider,external_session_id,project_id,worktree_id,work_unit_id,agent_id,title,cwd,started_at,last_seen_at,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,'running')")
             .bind(&sid).bind(provider).bind(format!("otter:{sid}")).bind(unit["project_id"].as_str()).bind(agent["worktree_id"].as_str()).bind(uid).bind(aid)
             .bind(format!("{} · {}",agent["name"].as_str().unwrap_or("Agent"),unit["title"].as_str().unwrap_or("Work Unit"))).bind(cwd).bind(now()).bind(now()).execute(&mut *tx).await?;
@@ -80,7 +100,20 @@ impl Executor {
             .await?;
         sqlx::query("INSERT INTO timeline(work_unit_id,agent_id,kind,text,created_at) VALUES(?,?,'agent.started',?,?)")
             .bind(uid).bind(aid).bind(format!("{} started ({provider})",agent["name"].as_str().unwrap_or("Agent"))).bind(now()).execute(&mut *tx).await?;
+        if let Some(mut payload) = handoff {
+            payload["destination_session"] = sid.clone().into();
+            let hid = id();
+            sqlx::query("INSERT INTO handoffs(id,work_unit_id,source_agent_id,destination_agent_id,payload_json,created_at) VALUES(?,?,?,?,?,?)")
+                .bind(&hid).bind(uid).bind(payload["source_agent_id"].as_str()).bind(aid).bind(payload.to_string()).bind(now()).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO timeline(work_unit_id,agent_id,kind,text,detail_json,created_at) VALUES(?,?,'workflow.handoff',?,?,?)")
+                .bind(uid).bind(aid).bind(format!("Structured handoff to {}",agent["name"].as_str().unwrap_or("Agent"))).bind(json!({"handoff_id":hid}).to_string()).bind(now()).execute(&mut *tx).await?;
+        }
         tx.commit().await?;
+        tracing::info!(
+            provider,
+            role = agent["role"].as_str().unwrap_or("unknown"),
+            "Otter managed agent started"
+        );
         running.insert(aid.into(), cancel);
         drop(running);
         let engine = self.clone();
@@ -241,6 +274,7 @@ impl Executor {
             command.args([
                 "exec",
                 "--json",
+                "--ephemeral",
                 "--color",
                 "never",
                 "-c",
@@ -260,6 +294,7 @@ impl Executor {
             command.args([
                 "--print",
                 "--verbose",
+                "--no-session-persistence",
                 "--output-format",
                 "stream-json",
                 "--permission-mode",
@@ -281,6 +316,15 @@ impl Executor {
         #[cfg(unix)]
         {
             command.process_group(0);
+        }
+        #[cfg(target_os = "linux")]
+        unsafe {
+            command.pre_exec(|| {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
         }
         let mut child = command
             .spawn()
@@ -332,6 +376,26 @@ impl Executor {
             };
             let raw = serde_json::from_slice::<Value>(&line)
                 .unwrap_or(json!({"type":"unparsed.stdout","text":String::from_utf8_lossy(&line)}));
+            if raw["type"] == "thread.started" {
+                if let Some(native_id) = raw["thread_id"].as_str() {
+                    self.db
+                        .execute(
+                            "UPDATE provider_sessions SET external_session_id=? WHERE id=?",
+                            vec![native_id.into(), sid.into()],
+                        )
+                        .await?;
+                }
+            }
+            if provider == "claude" && raw["type"] == "system" && raw["subtype"] == "init" {
+                if let Some(native_id) = raw["session_id"].as_str() {
+                    self.db
+                        .execute(
+                            "UPDATE provider_sessions SET external_session_id=? WHERE id=?",
+                            vec![native_id.into(), sid.into()],
+                        )
+                        .await?;
+                }
+            }
             let events = adapter.normalize(&raw);
             for e in &events {
                 if e.kind == "assistant.message" {
@@ -437,6 +501,7 @@ impl Executor {
             .await?;
         sqlx::query("INSERT INTO timeline(work_unit_id,agent_id,kind,text,detail_json,created_at) VALUES(?,?,?,?,?,?)").bind(uid).bind(aid).bind(format!("agent.{status}")).bind(format!("{} {status}",agent["name"].as_str().unwrap_or("Agent"))).bind(json!({"session_id":sid,"error":error,"synthetic":agent["provider"]=="fake"}).to_string()).bind(now()).execute(&mut *tx).await?;
         tx.commit().await?;
+        tracing::info!(status, "Otter managed agent ended");
         Ok(())
     }
 
@@ -475,23 +540,17 @@ impl Executor {
             )
             .await?;
             let plan=self.db.rows("SELECT body FROM artifacts WHERE work_unit_id=? AND kind='planner' ORDER BY created_at DESC LIMIT 1",vec![uid.into()]).await?;
-            let payload = json!({"work_unit_id":uid,"source_agent_id":previous.map(|a|&a["id"]),"destination_agent_id":agent["id"],"original_task":{"title":unit["title"],"description":unit["description"]},"source_session":previous.map(|a|&a["provider_session_id"]),"base_commit":unit["base_commit"],"head":snapshot.head,"changed_files":snapshot.changed_files,"git_diff_summary":diff,"planner_plan":plan.first().map(|p|&p["body"]),"previous_result":previous.map(|a|&a["result"]),"known_problems":previous.map(|a|&a["error"]),"next_requested_action":format!("Perform the {role} role and report your result")});
+            let payload = json!({"work_unit_id":uid,"project_id":unit["project_id"],"branch":unit["branch"],"worktree":unit["worktree_path"],"source_provider":previous.map(|a|&a["provider"]),"destination_provider":agent["provider"],"source_agent_id":previous.map(|a|&a["id"]),"destination_agent_id":agent["id"],"original_task":{"title":unit["title"],"description":unit["description"]},"source_session":previous.map(|a|&a["provider_session_id"]),"base_commit":unit["base_commit"],"head":snapshot.head,"changed_files":snapshot.changed_files,"git_diff_summary":diff,"planner_plan":plan.first().map(|p|&p["body"]),"previous_result":previous.map(|a|&a["result"]),"known_problems":previous.map(|a|&a["error"]),"next_requested_action":format!("Perform the {role} role and report your result")});
             let started = self
-                .start(
+                .start_with_handoff(
                     agent["id"].as_str().context("Agent missing")?,
                     format!(
                         "Structured handoff:\n{}",
                         serde_json::to_string_pretty(&payload)?
                     ),
+                    previous.map(|_| payload),
                 )
                 .await?;
-            if let Some(source) = previous {
-                let mut payload = payload;
-                payload["destination_session"] = started["session_id"].clone();
-                let hid = id();
-                self.db.execute("INSERT INTO handoffs(id,work_unit_id,source_agent_id,destination_agent_id,payload_json,created_at) VALUES(?,?,?,?,?,?)",vec![hid.clone().into(),uid.into(),source["id"].clone(),agent["id"].clone(),payload,now().into()]).await?;
-                self.db.execute("INSERT INTO timeline(work_unit_id,agent_id,kind,text,detail_json,created_at) VALUES(?,?,'workflow.handoff',?,?,?)",vec![uid.into(),agent["id"].clone(),format!("{} → {}",source["name"].as_str().unwrap_or("Agent"),agent["name"].as_str().unwrap_or("Agent")).into(),json!({"handoff_id":hid}),now().into()]).await?;
-            }
             return Ok(started);
         }
         bail!(

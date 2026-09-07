@@ -1,5 +1,5 @@
 import { spawn, execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import assert from "node:assert/strict";
@@ -82,17 +82,51 @@ try {
   assert.equal(detail.worktrees.length, 1);
   assert.equal(detail.worktrees[0].branch, "main");
   assert.equal(detail.worktrees[0].dirty, false);
+  const unit = await request("/work-units", {
+    project_id: project.id,
+    title: "Crash recovery",
+    description: "Recover an interrupted agent",
+    base_branch: "main",
+    branch: "otter/crash-test",
+    worktree_path: join(temp, "feature"),
+    team: [{ name: "Planner", provider: "fake", role: "planner", model: null }],
+  });
+  const original = await request("/work-units/" + unit.id);
+  await request("/agents/" + original.agents[0].id + "/start", {
+    message: "Test interrupted process recovery",
+  });
   const oldToken = connection.token;
-  await stop();
+  const crashed = new Promise((r) => child.once("exit", r));
+  child.kill("SIGKILL");
+  await crashed;
+  await writeFile(join(repo, "after-crash.txt"), "Observed after restart\n");
+  git(
+    "-c",
+    "user.name=Otter Test",
+    "-c",
+    "user.email=otter@example.invalid",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "external update while daemon stopped",
+  );
   connection = await start();
   assert.notEqual(connection.token, oldToken);
   assert.equal((await request("/projects"))[0].id, project.id);
-  assert.equal(
+  assert.notEqual(
     (await request("/projects/" + project.id)).worktrees[0].head,
     detail.worktrees[0].head,
   );
+  assert.equal(
+    (await request("/projects/" + project.id)).worktrees[0].dirty,
+    true,
+  );
+  const restored = await request("/work-units/" + unit.id);
+  assert.equal(restored.agents[0].status, "interrupted");
+  assert.equal(restored.agents[0].pid, null);
+  assert.equal(restored.sessions[0].status, "interrupted");
   console.log(
-    "PASS: native daemon startup, authenticated HTTP, frontend serving, real Git registration, SQLite persistence and token rotation on restart",
+    "PASS: native daemon startup, authenticated HTTP, frontend serving, real Git registration, SIGKILL recovery, refreshed dirty state, interrupted agent/session reconciliation, SQLite persistence and token rotation",
   );
 } finally {
   await stop();

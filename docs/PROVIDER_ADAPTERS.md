@@ -18,10 +18,22 @@ summaries are shown as **Reasoning Summary**.
 
 The Codex adapter was checked against the installed CLI and the official
 [noninteractive execution documentation](https://learn.chatgpt.com/docs/non-interactive-mode).
-Otter will use least-privilege explicit sandbox settings for managed execution.
-Native resume and interactive agent PTY support remain disabled until implemented
-and verified. Model catalog discovery is not assumed: an empty catalog means the
+Otter uses least-privilege explicit sandbox settings for managed execution.
+Detection checks the required structured-output and safety flags in `exec --help`
+(Codex) or `--help` (Claude). Unsupported CLI versions cannot start managed agents,
+but their existing session files can still be imported.
+Managed Codex execution uses `--ephemeral`: Otter stores the JSONL stream and native
+thread identifier in its own database, avoiding duplicate imports of the same
+managed run from provider rollout files. Existing external sessions remain read-only.
+Native resume and interactive agent PTY support remain disabled. Model catalog discovery is not assumed: an empty catalog means the
 provider account's available models have not been established.
+
+The Claude command shape follows the official [CLI reference](https://code.claude.com/docs/en/cli-reference):
+print/verbose stream JSON, default permission mode, and no session persistence.
+Planner/Reviewer limit built-in tools to Read/Glob/Grep, but this is not an OS
+sandbox and does not restrict configured MCP tools. The UI therefore calls its
+role policy advisory. Provider-native session IDs are retained from init records.
+No installed Claude runtime or paid Claude model execution was verified here.
 
 ## Configuration
 

@@ -4,6 +4,8 @@ dist/
 .otter-dev/
 .tools/
 artifacts/
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/gen/
 playwright-report/
 test-results/
 *.db

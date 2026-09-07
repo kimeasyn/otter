@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+./scripts/in-dev bash -c '
+set -euo pipefail
+pnpm install --frozen-lockfile
+pnpm build
+cargo build --release -p otterd
+mkdir -p apps/desktop/src-tauri/binaries .otter-dev/appimage
+cp /cache/target/release/otterd apps/desktop/src-tauri/binaries/otterd-x86_64-unknown-linux-gnu
+# appimagetool downloads this on every run without retrying HTTP failures.
+# Cache the official runtime locally and complete downloads before publishing it.
+if [ ! -s .otter-dev/appimage/runtime-x86_64 ]; then
+  curl -fL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 60 \
+    https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64 \
+    -o .otter-dev/appimage/runtime-x86_64.next
+  mv .otter-dev/appimage/runtime-x86_64.next .otter-dev/appimage/runtime-x86_64
+fi
+LDAI_RUNTIME_FILE=/workspace/otter/.otter-dev/appimage/runtime-x86_64 pnpm --filter @otter/desktop tauri build
+mkdir -p artifacts/desktop
+cp /cache/target/release/bundle/deb/*.deb artifacts/desktop/
+cp /cache/target/release/bundle/appimage/*.AppImage artifacts/desktop/
+'

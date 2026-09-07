@@ -43,7 +43,7 @@ type Event = {
   source_event_type?: string;
   source_sequence?: number;
 };
-type Page<T> = { items: T[]; total: number };
+type Page<T> = { items: T[]; total: number; offset?: number };
 const tabs = [
   "Overview",
   "Conversation",
@@ -398,7 +398,7 @@ export function SessionView({
           ))}
           {events.data && (
             <Pager
-              offset={offset}
+              offset={events.data.offset ?? offset}
               total={events.data.total}
               onChange={setOffset}
             />

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+./scripts/in-dev bash -c 'pnpm install --frozen-lockfile && pnpm build && cargo build -p otterd && mkdir -p artifacts/dev && cp /cache/target/debug/otterd artifacts/dev/otterd && PLAYWRIGHT_BROWSERS_PATH=/workspace/otter/.otter-dev/browsers pnpm --filter @otter/web exec playwright install chromium && PLAYWRIGHT_BROWSERS_PATH=/workspace/otter/.otter-dev/browsers pnpm --filter @otter/web exec playwright test'

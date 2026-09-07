@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Otter",
+  "version": "0.1.0",
+  "identifier": "dev.otter.desktop",
+  "build": { "frontendDist": "../../web/dist" },
+  "app": { "windows": [], "security": { "capabilities": [] } },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "appimage"],
+    "category": "DeveloperTool",
+    "shortDescription": "Local-first AI Development Control Center",
+    "longDescription": "Otter connects Git worktrees, development tasks, AI agent teams, and persistent session history on your own machine.",
+    "externalBin": ["binaries/otterd"],
+    "resources": { "../../web/dist/": "web/" },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

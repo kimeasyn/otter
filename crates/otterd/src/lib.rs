@@ -45,6 +45,9 @@ impl<E: Into<anyhow::Error>> From<E> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         // Do not log request bodies, prompts, environment, or credentials.
+        tracing::warn!(
+            "Otter API operation failed; private details returned only to the authenticated caller"
+        );
         (
             StatusCode::BAD_REQUEST,
             Json(json!({"error":self.0.to_string()})),
@@ -152,6 +155,17 @@ pub fn router(state: AppState, web: PathBuf) -> Router {
             tower_http::services::ServeDir::new(web).append_index_html_on_directories(true),
         )
         .with_state(state)
+        .layer(middleware::from_fn(security_headers))
+}
+
+async fn security_headers(req: Request, next: Next) -> Response {
+    let mut response = next.run(req).await;
+    for (key,value) in [
+        ("x-content-type-options","nosniff"),
+        ("referrer-policy","no-referrer"),
+        ("content-security-policy","default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
+    ] {response.headers_mut().insert(axum::http::HeaderName::from_static(key),value.parse().unwrap());}
+    response
 }
 
 async fn projects(State(s): State<AppState>) -> ApiResult {
@@ -195,7 +209,7 @@ pub async fn scan_project(s: &AppState, pid: &str) -> anyhow::Result<Value> {
     let base = project["base_branch"].as_str().unwrap_or("main");
     let trees = git::discover(&root, base).await?;
     let mut views = vec![];
-    for tree in trees {
+    for mut tree in trees {
         let prior =
             s.db.rows(
                 "SELECT id,state_json FROM worktrees WHERE path=?",
@@ -207,11 +221,24 @@ pub async fn scan_project(s: &AppState, pid: &str) -> anyhow::Result<Value> {
             .and_then(|v| v["id"].as_str())
             .map(str::to_owned)
             .unwrap_or_else(id);
-        let unit=s.db.rows("SELECT id FROM work_units WHERE project_id=? AND worktree_path=? ORDER BY created_at DESC LIMIT 1",vec![pid.into(),tree.path.clone().into()]).await?;
+        let unit=s.db.rows("SELECT id,base_branch FROM work_units WHERE project_id=? AND worktree_path=? ORDER BY created_at DESC LIMIT 1",vec![pid.into(),tree.path.clone().into()]).await?;
         let uid = unit.first().map(|u| u["id"].clone()).unwrap_or(Value::Null);
+        let tree_base = unit
+            .first()
+            .and_then(|u| u["base_branch"].as_str())
+            .unwrap_or(base);
+        if tree_base != base && !tree.missing {
+            let locked = tree.locked;
+            tree = git::snapshot(std::path::Path::new(&tree.path), tree_base).await?;
+            tree.locked = locked;
+        }
         let state = serde_json::to_value(&tree)?;
-        s.db.execute("INSERT INTO worktrees(id,project_id,work_unit_id,path,branch,head_commit,base_branch,base_commit,state_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET work_unit_id=excluded.work_unit_id,branch=excluded.branch,head_commit=excluded.head_commit,state_json=excluded.state_json,updated_at=excluded.updated_at",
-            vec![tid.clone().into(),pid.into(),uid.clone(),tree.path.clone().into(),json!(tree.branch),tree.head.into(),base.into(),json!(tree.base_commit),state.clone(),now().into()]).await?;
+        s.db.execute("INSERT INTO worktrees(id,project_id,work_unit_id,path,branch,head_commit,base_branch,base_commit,state_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET work_unit_id=excluded.work_unit_id,branch=excluded.branch,head_commit=excluded.head_commit,base_branch=excluded.base_branch,base_commit=excluded.base_commit,state_json=excluded.state_json,updated_at=excluded.updated_at",
+            vec![tid.clone().into(),pid.into(),uid.clone(),tree.path.clone().into(),json!(tree.branch),tree.head.into(),tree_base.into(),json!(tree.base_commit),state.clone(),now().into()]).await?;
+        // History may have been indexed before this project was registered. Exact
+        // cwd identifies its repository, but does not prove a later Work Unit link.
+        s.db.execute("UPDATE provider_sessions SET project_id=coalesce(project_id,?),worktree_id=coalesce(worktree_id,?) WHERE cwd=? AND (project_id IS NULL OR project_id=?) AND (worktree_id IS NULL OR worktree_id=?)",
+            vec![pid.into(),tid.clone().into(),tree.path.clone().into(),pid.into(),tid.clone().into()]).await?;
         if prior.first().map(|v| &v["state_json"]) != Some(&state) {
             s.db.execute(
                 "INSERT INTO git_snapshots(worktree_id,state_json,created_at) VALUES(?,?,?)",

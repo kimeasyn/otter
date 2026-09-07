@@ -90,6 +90,27 @@ test("project, worktree, synthetic team workflow, history search and restart", a
     await expect(
       page.getByRole("heading", { name: "River parser recovery", exact: true }),
     ).toBeVisible();
+    await page.getByRole("button", { name: "+ Agent", exact: true }).click();
+    await page.getByLabel("Agent name", { exact: true }).fill("Scout");
+    await page
+      .getByRole("textbox", { name: "Instructions", exact: true })
+      .fill("Inspect the task and report risks.");
+    await page
+      .getByRole("button", { name: "Save reusable profile", exact: true })
+      .click();
+    await expect(
+      page.getByRole("option", { name: "Scout · fake · builder", exact: true }),
+    ).toHaveCount(1);
+    await page.getByRole("button", { name: "Save agent", exact: true }).click();
+    const scout = page.locator(".agent-card").filter({ hasText: "Scout" });
+    await expect(scout).toHaveCount(1);
+    await scout.getByRole("button", { name: "Edit", exact: true }).click();
+    await page.getByLabel("Agent name", { exact: true }).fill("ScoutTwo");
+    await page.getByRole("button", { name: "Save agent", exact: true }).click();
+    await expect(scout).toContainText("ScoutTwo");
+    page.once("dialog", (dialog) => dialog.accept());
+    await scout.getByRole("button", { name: "Remove", exact: true }).click();
+    await expect(scout).toHaveCount(0);
     for (const role of ["Planner", "Builder", "Reviewer"]) {
       await page
         .getByRole("button", { name: `Start ${role}`, exact: true })
@@ -174,6 +195,81 @@ test("project, worktree, synthetic team workflow, history search and restart", a
     expect(restored.artifacts).toHaveLength(3);
     await page.getByRole("button", { name: "◷ Sessions", exact: true }).click();
     await expect(page.locator(".list-row")).toHaveCount(3);
+    await page
+      .getByText("Import a specific session file", { exact: true })
+      .click();
+    await page
+      .getByLabel("JSONL path on daemon machine")
+      .fill(resolve("../../fixtures/codex/history.jsonl"));
+    await page
+      .getByRole("button", { name: "Import session", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", {
+        name: "Fix the river otter parser",
+        exact: true,
+      }),
+    ).toBeVisible();
+    for (const tab of [
+      "Conversation",
+      "Actions",
+      "Files",
+      "Commands",
+      "Timeline",
+      "Raw",
+    ]) {
+      await page.getByRole("tab", { name: tab, exact: true }).click();
+      await expect(page.locator(".event")).not.toHaveCount(0);
+    }
+    await page.getByRole("tab", { name: "Conversation", exact: true }).click();
+    await expect(
+      page.locator(".event .badge").filter({ hasText: /tool\./ }),
+    ).toHaveCount(0);
+    const imported = await fetch(connection.url + "/api/history/import", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${connection.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        provider: "codex",
+        path: resolve("../../fixtures/codex/history.jsonl"),
+      }),
+    });
+    expect((await imported.json()).inserted).toBe(0);
+    const claude = await fetch(connection.url + "/api/history/import", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${connection.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        provider: "claude",
+        path: resolve("../../fixtures/claude/history.jsonl"),
+      }),
+    });
+    expect((await claude.json()).inserted).toBe(7);
+    await page
+      .getByRole("button", { name: "▤ Work Units", exact: true })
+      .click();
+    await page.getByRole("button", { name: /River parser recovery/ }).click();
+    await page
+      .getByLabel("Request", { exact: true })
+      .fill("@REVIEWER inspect the current task");
+    await page
+      .getByRole("button", { name: "Send request", exact: true })
+      .click();
+    const reviewer = page
+      .locator(".agent-card")
+      .filter({ hasText: "Reviewer" });
+    await reviewer.getByRole("button", { name: "Stop", exact: true }).click();
+    await expect(reviewer.locator(".badge")).toHaveText("stopped");
+    await reviewer
+      .getByRole("button", { name: "Session", exact: true })
+      .click();
+    await expect(
+      page.getByRole("tab", { name: "Overview", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
     expect(errors).toEqual([]);
   } finally {
     await stop();

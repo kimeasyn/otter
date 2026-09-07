@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde_json::{Map, Value};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-    Column, Row, SqlitePool, TypeInfo, ValueRef,
+    Column, Connection, Row, SqlitePool, TypeInfo, ValueRef,
 };
 use std::{path::Path, time::Duration};
 
@@ -11,6 +11,26 @@ pub struct Db(pub SqlitePool);
 
 impl Db {
     pub async fn open(path: &Path) -> Result<Self> {
+        let migrations = sqlx::migrate!();
+        if std::fs::metadata(path).is_ok_and(|m| m.len() > 0) {
+            let options = SqliteConnectOptions::new().filename(path).read_only(true);
+            let mut inspection = sqlx::SqliteConnection::connect_with(&options).await?;
+            let app_id: i64 = sqlx::query_scalar("PRAGMA application_id")
+                .fetch_one(&mut inspection)
+                .await?;
+            let baseline: Option<Vec<u8>> = sqlx::query_scalar(
+                "SELECT checksum FROM _sqlx_migrations WHERE version=1 AND success=1",
+            )
+            .fetch_optional(&mut inspection)
+            .await
+            .unwrap_or(None);
+            let legacy = app_id == 0
+                && baseline.as_deref() == migrations.iter().next().map(|m| m.checksum.as_ref());
+            if app_id != 1330926674 && !legacy {
+                anyhow::bail!("Refusing to modify a database not identified as Otter");
+            }
+            inspection.close().await?;
+        }
         let options = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true)
@@ -21,7 +41,7 @@ impl Db {
             .max_connections(5)
             .connect_with(options)
             .await?;
-        sqlx::migrate!().run(&pool).await?;
+        migrations.run(&pool).await?;
         Ok(Self(pool))
     }
 

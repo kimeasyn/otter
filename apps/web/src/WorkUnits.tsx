@@ -178,6 +178,9 @@ function ProfileFields({
         {provider?.capabilities.model_selection &&
           "Enter a model supported by your provider account, or leave blank for its default."}
       </p>
+      {provider && !provider.capabilities.one_shot && (
+        <p className="warning">{provider.note}</p>
+      )}
       <label>
         Instructions
         <textarea
@@ -881,6 +884,17 @@ export function WorkUnitView({
             {next && !running && (
               <p className="muted">{next} is waiting to start.</p>
             )}
+            {!running &&
+              !next &&
+              !d.git?.behind &&
+              !d.agents.some((a) =>
+                ["failed", "interrupted", "stopped"].includes(a.status),
+              ) && (
+                <p className="muted">
+                  No current process or workflow alerts. Review merge evidence
+                  separately.
+                </p>
+              )}
           </section>
           <section className="panel">
             <h2>Work Unit status</h2>

@@ -170,3 +170,116 @@ async fn explicit_routing_cancellation_failure_and_duplicate_start() {
     assert_eq!(work::slug("Fix parser!"), "otter/fix-parser");
     assert_eq!(json!(agents.len()), 3);
 }
+
+#[tokio::test]
+async fn failed_persistence_rolls_back_only_the_new_worktree() {
+    let (temp, db, _unit) = setup().await;
+    db.execute("CREATE TRIGGER reject_test_work BEFORE INSERT ON work_units BEGIN SELECT RAISE(ABORT,'simulated storage failure'); END",vec![]).await.unwrap();
+    let path = temp.path().join("rollback");
+    let request:work::NewWork=serde_json::from_value(json!({"project_id":"p","title":"Rollback test","base_branch":"main","branch":"otter/rollback","worktree_path":path,"team":[{"name":"Planner","provider":"fake","role":"planner","model":null}]})).unwrap();
+    let error = work::create(&db, request).await.unwrap_err();
+    assert!(error.to_string().contains("simulated storage failure"));
+    assert!(!path.exists());
+    assert!(git::run(
+        &temp.path().join("repo"),
+        &["show-ref", "--verify", "refs/heads/otter/rollback"]
+    )
+    .await
+    .is_err());
+    assert_eq!(
+        git::discover(&temp.path().join("repo"), "main")
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn failed_handoff_persistence_never_starts_the_next_agent() {
+    let (_temp, db, unit) = setup().await;
+    let uid = unit["id"].as_str().unwrap();
+    let executor = Executor::new(db.clone());
+    let planner = executor.next(uid).await.unwrap();
+    assert_eq!(
+        wait(&db, planner["agent_id"].as_str().unwrap()).await["status"],
+        "completed"
+    );
+    executor.shutdown().await;
+    db.execute("CREATE TRIGGER reject_handoff BEFORE INSERT ON handoffs BEGIN SELECT RAISE(ABORT,'simulated handoff failure'); END", vec![]).await.unwrap();
+    assert!(executor
+        .next(uid)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("simulated handoff failure"));
+    let team = work::team(&db, uid).await.unwrap();
+    let builder = team.iter().find(|a| a["role"] == "builder").unwrap();
+    assert_eq!(builder["status"], "idle");
+    assert!(builder["provider_session_id"].is_null());
+    assert_eq!(
+        db.one("SELECT count(*) AS n FROM provider_sessions", vec![])
+            .await
+            .unwrap()["n"],
+        1
+    );
+    executor.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn real_process_adapter_uses_explicit_sandbox_and_captures_jsonl() {
+    use std::os::unix::fs::PermissionsExt;
+    let (temp, db, unit) = setup().await;
+    let cli = temp.path().join("codex-contract-fixture");
+    std::fs::write(&cli,r#"#!/bin/sh
+case "$*" in
+  --version) printf 'codex synthetic contract fixture\n'; exit 0;;
+  'exec --help') printf 'exec --sandbox --model --json --ephemeral --color\n'; exit 0;;
+esac
+case "$*" in *'--sandbox read-only'*) ;; *) exit 91;; esac
+case "$*" in *danger*) exit 92;; esac
+cat >/dev/null
+printf '%s\n' '{"type":"thread.started","thread_id":"synthetic-native-process"}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"cargo test","exit_code":0,"aggregated_output":"synthetic command output"}}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Native process contract test completed"}}'
+printf '%s\n' '{"type":"turn.completed"}'
+"#).unwrap();
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let previous = std::env::var_os("OTTER_CODEX_BIN");
+    std::env::set_var("OTTER_CODEX_BIN", &cli);
+    let team = work::team(&db, unit["id"].as_str().unwrap()).await.unwrap();
+    let planner = &team[0];
+    db.execute(
+        "UPDATE agent_profiles SET provider='codex',model=NULL WHERE id=?",
+        vec![planner["profile_id"].clone()],
+    )
+    .await
+    .unwrap();
+    let executor = Executor::new(db.clone());
+    let run = executor
+        .start(
+            planner["id"].as_str().unwrap(),
+            "Contract test, no provider API call".into(),
+        )
+        .await
+        .unwrap();
+    let agent = wait(&db, planner["id"].as_str().unwrap()).await;
+    executor.shutdown().await;
+    match previous {
+        Some(value) => std::env::set_var("OTTER_CODEX_BIN", value),
+        None => std::env::remove_var("OTTER_CODEX_BIN"),
+    }
+    assert_eq!(agent["status"], "completed", "{agent}");
+    assert_eq!(agent["result"], "Native process contract test completed");
+    let events = db
+        .rows(
+            "SELECT kind,detail_json FROM normalized_events WHERE session_id=?",
+            vec![run["session_id"].clone()],
+        )
+        .await
+        .unwrap();
+    assert!(events
+        .iter()
+        .any(|e| e["kind"] == "tool.shell" && e["detail_json"]["exit_code"] == 0));
+}

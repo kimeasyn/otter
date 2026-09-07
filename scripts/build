@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+./scripts/in-dev bash -c 'pnpm install --frozen-lockfile && pnpm build && cargo build --release -p otterd && mkdir -p artifacts/otter-linux-x86_64/web && cp /cache/target/release/otterd artifacts/otter-linux-x86_64/otterd.next && mv artifacts/otter-linux-x86_64/otterd.next artifacts/otter-linux-x86_64/otterd && cp -R apps/web/dist/. artifacts/otter-linux-x86_64/web/ && cp scripts/run-release artifacts/otter-linux-x86_64/otter && chmod +x artifacts/otter-linux-x86_64/otter && tar -czf artifacts/otter-linux-x86_64.tar.gz -C artifacts otter-linux-x86_64'
