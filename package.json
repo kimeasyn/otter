@@ -1,0 +1,11 @@
+{
+  "name": "otter",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.30.3",
+  "scripts": {
+    "build": "pnpm --filter @otter/web build",
+    "check": "pnpm --filter @otter/web check",
+    "test": "pnpm --filter @otter/web test"
+  }
+}

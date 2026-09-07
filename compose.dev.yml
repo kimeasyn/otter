@@ -1,0 +1,20 @@
+name: otter-dev
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        OTTER_UID: ${OTTER_UID:-1000}
+        OTTER_GID: ${OTTER_GID:-1000}
+    init: true
+    working_dir: /workspace/otter
+    volumes:
+      - .:/workspace/otter
+      - cargo:/cache/cargo
+      - target:/cache/target
+      - pnpm:/cache/pnpm
+volumes:
+  cargo:
+  target:
+  pnpm:

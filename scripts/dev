@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export OTTER_UID="$(id -u)" OTTER_GID="$(id -g)"
+docker compose -f compose.dev.yml build dev
+./scripts/in-dev bash -c 'pnpm install --frozen-lockfile && pnpm build && cargo build -p otterd && mkdir -p artifacts/dev && cp /cache/target/debug/otterd artifacts/dev/otterd'
+exec node scripts/launch.mjs

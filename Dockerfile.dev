@@ -1,0 +1,21 @@
+FROM node:24-bookworm-slim AS node
+FROM rust:1-bookworm
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && npm install -g pnpm@10 \
+ && apt-get update && apt-get install -y --no-install-recommends \
+    libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+    libsqlite3-dev pkg-config xvfb xauth ca-certificates curl git \
+ && rm -rf /var/lib/apt/lists/* \
+ && rustup component add rustfmt clippy
+ARG OTTER_UID=1000
+ARG OTTER_GID=1000
+RUN groupadd -g ${OTTER_GID} otter && useradd -m -u ${OTTER_UID} -g ${OTTER_GID} otter \
+ && mkdir -p /cache/cargo /cache/target /cache/pnpm \
+ && chown -R otter:otter /cache
+ENV CARGO_HOME=/cache/cargo CARGO_TARGET_DIR=/cache/target
+USER otter
+WORKDIR /workspace/otter
+RUN pnpm config set store-dir /cache/pnpm
+CMD ["bash"]

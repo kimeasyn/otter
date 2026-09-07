@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export OTTER_UID="$(id -u)" OTTER_GID="$(id -g)"
+docker compose -f compose.dev.yml run --rm --no-deps dev "$@"
