@@ -12,17 +12,23 @@ use serde_json::{json, Value};
 use std::{path::PathBuf, sync::Arc};
 use subtle::ConstantTimeEq;
 pub mod history;
+pub mod terminal;
+pub mod units;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: Db,
     pub token: Arc<String>,
     pub ingest_lock: Arc<tokio::sync::Mutex<()>>,
+    pub executor: otter_core::execution::Executor,
+    pub terminal_shutdown: tokio::sync::watch::Sender<bool>,
 }
 
 impl AppState {
     pub fn new(db: Db, token: String) -> Self {
         Self {
+            executor: otter_core::execution::Executor::new(db.clone()),
+            terminal_shutdown: tokio::sync::watch::channel(false).0,
             db,
             token: Arc::new(token),
             ingest_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -68,6 +74,20 @@ async fn auth(State(s): State<AppState>, req: Request, next: Next) -> Response {
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
+        .or_else(|| {
+            if req.uri().path().ends_with("/terminals/ws") {
+                req.headers()
+                    .get("sec-websocket-protocol")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| {
+                        v.split(',')
+                            .map(str::trim)
+                            .find_map(|p| p.strip_prefix("otter.auth."))
+                    })
+            } else {
+                None
+            }
+        })
         .unwrap_or("");
     if !bool::from(supplied.as_bytes().ct_eq(s.token.as_bytes())) {
         return (
@@ -91,7 +111,33 @@ pub fn router(state: AppState, web: PathBuf) -> Router {
         )
         .route("/projects", get(projects).post(add_project))
         .route("/projects/{id}", get(project_detail))
+        .route("/terminals/ws", get(terminal::upgrade))
         .route("/providers", get(history::providers_list))
+        .route("/profiles", get(units::profiles).post(units::add_profile))
+        .route("/work-units", get(units::list).post(units::create))
+        .route("/work-units/{id}", get(units::detail))
+        .route(
+            "/work-units/{id}/status",
+            axum::routing::post(units::status),
+        )
+        .route("/work-units/{id}/next", axum::routing::post(units::next))
+        .route(
+            "/work-units/{id}/message",
+            axum::routing::post(units::address),
+        )
+        .route(
+            "/work-units/{id}/agents",
+            axum::routing::post(units::add_agent),
+        )
+        .route(
+            "/agents/{id}",
+            axum::routing::put(units::edit_agent).delete(units::delete_agent),
+        )
+        .route(
+            "/agents/{id}/start",
+            axum::routing::post(units::start_agent),
+        )
+        .route("/agents/{id}/stop", axum::routing::post(units::stop_agent))
         .route("/sessions", get(history::sessions))
         .route("/sessions/{id}", get(history::session))
         .route("/sessions/{id}/events", get(history::events))

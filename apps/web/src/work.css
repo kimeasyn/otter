@@ -1,0 +1,142 @@
+.project-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 18px;
+}
+.unit-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 22px;
+}
+.task-description {
+  white-space: pre-wrap;
+  color: #a5b7c0;
+  max-width: 900px;
+}
+.facts.compact {
+  grid-template-columns: 140px 1fr;
+  font-size: 12px;
+}
+.agent-card {
+  padding: 18px 0;
+  border-bottom: 1px solid #303c41;
+}
+.agent-card:last-child {
+  border: 0;
+  padding-bottom: 0;
+}
+.agent-card .section-title {
+  margin-bottom: 0;
+}
+.agent-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+.agent-actions button {
+  font-size: 11px;
+  padding: 6px 9px;
+}
+.artifact {
+  border-left: 2px solid #577565;
+  padding-left: 16px;
+  margin: 20px 0;
+}
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: #080c10c9;
+  backdrop-filter: blur(3px);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.modal {
+  width: 760px;
+  max-width: 100%;
+  max-height: 90vh;
+  overflow: auto;
+  background: #1b2328;
+  border: 1px solid #4a5b64;
+  border-radius: 12px;
+  padding: 28px;
+  box-shadow: 0 30px 90px #0008;
+}
+.modal-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-top: 24px;
+}
+.form-stack {
+  display: grid;
+  gap: 18px;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.profile-fields {
+  padding-top: 14px;
+}
+.profile-fields > .form-grid {
+  margin-top: 14px;
+}
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.checkbox input {
+  width: auto;
+  margin: 0;
+}
+.wizard-steps {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid #3a464c;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  color: #80939d;
+  font-size: 12px;
+}
+.wizard-steps .current {
+  color: #b4e5ce;
+  font-weight: 600;
+}
+@media (max-width: 1200px) {
+  .unit-columns {
+    grid-template-columns: 1fr;
+  }
+  .unit-columns > div:last-child {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    align-items: start;
+  }
+  .unit-columns > div:last-child .panel {
+    margin-bottom: 0;
+  }
+}
+@media (max-width: 700px) {
+  .unit-columns > div:last-child,
+  .form-grid {
+    display: block;
+  }
+  .modal {
+    padding: 20px;
+  }
+  .unit-columns > div:last-child .panel {
+    margin-bottom: 18px;
+  }
+  .section-title {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+}

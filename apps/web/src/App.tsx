@@ -1,7 +1,12 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, useAuth } from "./api";
 import { Sessions, SessionView, Search } from "./History";
+import { NewWorkUnit, WorkUnits, WorkUnitView, type Unit } from "./WorkUnits";
+import type { TerminalTarget } from "./Terminal";
+const Terminal = lazy(() =>
+  import("./Terminal").then((m) => ({ default: m.Terminal })),
+);
 
 type Project = {
   id: string;
@@ -21,12 +26,13 @@ export type Tree = {
   warning: string | null;
   agents: { name: string; provider: string; status: string }[];
   changed_files: string[];
+  work_unit_id?: string | null;
 };
 type Detail = {
   project: Project;
   branches: string[];
   worktrees: Tree[];
-  work_units: unknown[];
+  work_units: Unit[];
 };
 
 export function WorkspaceMap({
@@ -87,10 +93,17 @@ export function App() {
   const [inputToken, setInputToken] = useState("");
   const [selected, setSelected] = useState("");
   const [path, setPath] = useState("");
-  const [tree, setTree] = useState<Tree | null>(null);
+  const [selectedTree, setTree] = useState<Tree | null>(null);
   const [view, setView] = useState("projects");
   const [session, setSession] = useState("");
   const [focus, setFocus] = useState<string | undefined>();
+  const [unit, setUnit] = useState("");
+  const [newWork, setNewWork] = useState(false);
+  const [terminal, setTerminal] = useState<TerminalTarget | null>(null);
+  const openUnit = (id: string) => {
+    setUnit(id);
+    setView("unit");
+  };
   const openSession = (id: string, event?: string) => {
     setSession(id);
     setFocus(event);
@@ -101,6 +114,7 @@ export function App() {
     queryKey: ["health", token],
     queryFn: () => api<{ name: string; version: string }>("/health"),
     enabled: !!token,
+    refetchInterval: 10000,
   });
   const projects = useQuery({
     queryKey: ["projects", token],
@@ -121,6 +135,9 @@ export function App() {
       client.invalidateQueries({ queryKey: ["projects"] });
     },
   });
+  const tree =
+    detail.data?.worktrees.find((t) => t.id === selectedTree?.id) ??
+    selectedTree;
   if (!health.isSuccess)
     return (
       <main className="connect panel">
@@ -176,6 +193,12 @@ export function App() {
           ▦ Projects
         </button>
         <button
+          className={`nav ${view === "units" || view === "unit" ? "active" : ""}`}
+          onClick={() => setView("units")}
+        >
+          ▤ Work Units
+        </button>
+        <button
           className={`nav ${view === "sessions" || view === "session" ? "active" : ""}`}
           onClick={() => setView("sessions")}
         >
@@ -211,12 +234,23 @@ export function App() {
         {view === "sessions" ? (
           <Sessions onOpen={openSession} />
         ) : view === "session" ? (
-          <SessionView key={`${session}-${focus}`} id={session} focus={focus} />
-        ) : view === "search" ? (
-          <Search
-            onSession={openSession}
-            onWorkUnit={() => setView("projects")}
+          <SessionView
+            key={`${session}-${focus}`}
+            id={session}
+            focus={focus}
+            onWorkUnit={openUnit}
           />
+        ) : view === "units" ? (
+          <WorkUnits onOpen={openUnit} onNew={() => setNewWork(true)} />
+        ) : view === "unit" ? (
+          <WorkUnitView
+            key={unit}
+            id={unit}
+            onSession={openSession}
+            onTerminal={setTerminal}
+          />
+        ) : view === "search" ? (
+          <Search onSession={openSession} onWorkUnit={openUnit} />
         ) : (
           <>
             <div className="page-title">
@@ -268,6 +302,21 @@ export function App() {
             )}
             {detail.data && (
               <>
+                <div className="project-actions">
+                  <button
+                    onClick={() =>
+                      setTerminal({
+                        projectId: selected,
+                        label: detail.data!.project.name,
+                      })
+                    }
+                  >
+                    Open project terminal
+                  </button>
+                  <button className="primary" onClick={() => setNewWork(true)}>
+                    + New Work Unit
+                  </button>
+                </div>
                 <WorkspaceMap
                   trees={detail.data.worktrees}
                   base={detail.data.project.base_branch}
@@ -277,6 +326,26 @@ export function App() {
                   <section className="panel">
                     <h2>{tree.branch ?? "Detached worktree"}</h2>
                     <code>{tree.path}</code>
+                    <p>
+                      <button
+                        onClick={() =>
+                          setTerminal({
+                            projectId: selected,
+                            worktreeId: tree.id,
+                            label: tree.branch ?? tree.path,
+                          })
+                        }
+                      >
+                        Open worktree terminal
+                      </button>
+                    </p>
+                    {tree.work_unit_id && (
+                      <p>
+                        <button onClick={() => openUnit(tree.work_unit_id!)}>
+                          Open Work Unit
+                        </button>
+                      </p>
+                    )}
                     <p>
                       HEAD <code>{tree.head}</code>
                     </p>
@@ -295,11 +364,49 @@ export function App() {
                     )}
                   </section>
                 )}
+                <section className="panel">
+                  <h2>Project Work Units</h2>
+                  {detail.data.work_units.length ? (
+                    detail.data.work_units.map((u) => (
+                      <button
+                        className="list-row"
+                        key={u.id}
+                        onClick={() => openUnit(u.id)}
+                      >
+                        <strong>{u.title}</strong>
+                        <span className="badge">{u.status}</span>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="muted">
+                      No Work Units yet. Create one to connect this repository
+                      to an Agent Team.
+                    </p>
+                  )}
+                </section>
               </>
             )}
           </>
         )}
       </main>
+      {terminal && (
+        <Suspense fallback={<p>Loading terminal…</p>}>
+          <Terminal target={terminal} onClose={() => setTerminal(null)} />
+        </Suspense>
+      )}
+      {newWork && (
+        <NewWorkUnit
+          projects={projects.data ?? []}
+          initialProject={selected}
+          onClose={() => setNewWork(false)}
+          onCreated={(id) => {
+            setNewWork(false);
+            client.invalidateQueries({ queryKey: ["work-units"] });
+            client.invalidateQueries({ queryKey: ["project"] });
+            openUnit(id);
+          }}
+        />
+      )}
     </div>
   );
 }

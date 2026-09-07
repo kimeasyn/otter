@@ -124,7 +124,7 @@ pub async fn search(State(s): State<AppState>, Query(p): Query<Page>) -> ApiResu
     if query.is_empty() {
         return Ok(Json(json!({"items":[],"total":0})));
     }
-    let rows=s.db.rows("SELECT kind,source_id,session_id,work_unit_id,snippet(search_index,4,'[',']',' … ',32) AS snippet FROM search_index WHERE search_index MATCH ? ORDER BY rank LIMIT ? OFFSET ?",vec![query.clone().into(),p.limit().into(),p.offset().into()]).await?;
+    let rows=s.db.rows("SELECT kind,CAST(source_id AS TEXT) AS source_id,session_id,work_unit_id,snippet(search_index,4,'[',']',' … ',32) AS snippet FROM search_index WHERE search_index MATCH ? ORDER BY rank LIMIT ? OFFSET ?",vec![query.clone().into(),p.limit().into(),p.offset().into()]).await?;
     let total =
         s.db.one(
             "SELECT count(*) AS n FROM search_index WHERE search_index MATCH ?",

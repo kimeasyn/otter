@@ -49,6 +49,7 @@ async fn main() -> Result<()> {
     let address = listener.local_addr()?;
     let db = Db::open(&data.join("otter.db")).await?;
     db.reconcile().await?;
+    otter_core::work::seed_profiles(&db).await?;
     let token = format!("{}{}", otter_core::id(), otter_core::id());
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
@@ -77,9 +78,13 @@ async fn main() -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("apps/web/dist"));
     tracing::info!(%address,"Otter daemon started; authentication details are in the private data directory");
+    let executor = state.executor.clone();
+    let terminal_shutdown = state.terminal_shutdown.clone();
     axum::serve(listener, router(state, web))
-        .with_graceful_shutdown(async {
+        .with_graceful_shutdown(async move {
             let _ = tokio::signal::ctrl_c().await;
+            let _ = terminal_shutdown.send(true);
+            executor.shutdown().await;
         })
         .await?;
     fs::remove_file(data.join("connection.json"))?;
