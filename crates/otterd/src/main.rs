@@ -7,7 +7,6 @@ use std::{
     io::Write,
     net::SocketAddr,
     path::PathBuf,
-    sync::Arc,
 };
 
 #[tokio::main]
@@ -60,10 +59,20 @@ async fn main() -> Result<()> {
     }
     let mut connection = options.open(data.join("connection.json"))?;
     connection.write_all(serde_json::to_string(&serde_json::json!({"url":format!("http://{address}"),"token":token,"pid":std::process::id()}))?.as_bytes())?;
-    let state = AppState {
-        db,
-        token: Arc::new(token),
-    };
+    let state = AppState::new(db, token);
+    let background = state.clone();
+    if std::env::var("OTTER_AUTO_IMPORT").as_deref() != Ok("0") {
+        tokio::spawn(async move {
+            loop {
+                let results = otterd::history::scan(&background).await;
+                let errors = results.iter().filter(|v| v.get("error").is_some()).count();
+                if errors > 0 {
+                    tracing::warn!(errors,"Otter session import encountered unreadable sources; manual scan shows details");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            }
+        });
+    }
     let web = std::env::var_os("OTTER_WEB_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("apps/web/dist"));

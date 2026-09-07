@@ -11,11 +11,23 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{path::PathBuf, sync::Arc};
 use subtle::ConstantTimeEq;
+pub mod history;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: Db,
     pub token: Arc<String>,
+    pub ingest_lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl AppState {
+    pub fn new(db: Db, token: String) -> Self {
+        Self {
+            db,
+            token: Arc::new(token),
+            ingest_lock: Arc::new(tokio::sync::Mutex::new(())),
+        }
+    }
 }
 
 pub struct ApiError(pub anyhow::Error);
@@ -79,6 +91,14 @@ pub fn router(state: AppState, web: PathBuf) -> Router {
         )
         .route("/projects", get(projects).post(add_project))
         .route("/projects/{id}", get(project_detail))
+        .route("/providers", get(history::providers_list))
+        .route("/sessions", get(history::sessions))
+        .route("/sessions/{id}", get(history::session))
+        .route("/sessions/{id}/events", get(history::events))
+        .route("/search", get(history::search))
+        .route("/history/discover", get(history::discover))
+        .route("/history/import", axum::routing::post(history::import))
+        .route("/history/scan", axum::routing::post(history::scan_all))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth));
     Router::new()
         .nest("/api", api)

@@ -1,0 +1,9 @@
+{"timestamp":"2026-01-01T10:00:00Z","type":"session_meta","payload":{"id":"synthetic-codex-history","cwd":"/synthetic/otter-test"}}
+{"timestamp":"2026-01-01T10:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix the river otter parser"}]}}
+{"timestamp":"2026-01-01T10:00:02Z","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"I will inspect the parser boundary."}],"encrypted_content":"synthetic-opaque-content"}}
+{"timestamp":"2026-01-01T10:00:03Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-1","arguments":"{\"cmd\":\"cargo test parser\"}"}}
+{"timestamp":"2026-01-01T10:00:04Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"exit_code: 0\n3 tests passed"}}
+{"timestamp":"2026-01-01T10:00:05Z","type":"item.completed","item":{"type":"file_change","changes":[{"path":"src/parser.rs","kind":"update"}]}}
+{"timestamp":"2026-01-01T10:00:06Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The river otter parser handles partial records."}]}}
+{"timestamp":"2026-01-01T10:00:07Z","type":"future_event","future":{"extra":true}}
+not a valid JSON record

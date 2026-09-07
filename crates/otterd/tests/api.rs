@@ -4,20 +4,13 @@ use axum::{
 };
 use otter_core::db::Db;
 use otterd::{router, AppState};
-use std::sync::Arc;
 use tower::ServiceExt;
 
 #[tokio::test]
 async fn local_api_requires_token_and_rejects_cross_origin() {
     let tmp = tempfile::tempdir().unwrap();
     let db = Db::open(&tmp.path().join("test.db")).await.unwrap();
-    let app = router(
-        AppState {
-            db,
-            token: Arc::new("test-token".into()),
-        },
-        tmp.path().into(),
-    );
+    let app = router(AppState::new(db, "test-token".into()), tmp.path().into());
     for (host, token, origin, expected) in [
         ("localhost:4317", "", None, StatusCode::UNAUTHORIZED),
         (

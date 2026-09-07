@@ -1,0 +1,7 @@
+{"type":"user","sessionId":"synthetic-claude-history","cwd":"/synthetic/otter-test","timestamp":"2026-01-01T11:00:00Z","message":{"role":"user","content":"Review the river otter parser"}}
+{"type":"assistant","sessionId":"synthetic-claude-history","timestamp":"2026-01-01T11:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"I will check parser recovery."},{"type":"tool_use","id":"call-1","name":"Read","input":{"file_path":"src/parser.rs"}}]}}
+{"type":"user","sessionId":"synthetic-claude-history","timestamp":"2026-01-01T11:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call-1","content":"synthetic source code"}]}}
+{"type":"assistant","sessionId":"synthetic-claude-history","timestamp":"2026-01-01T11:00:03Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"call-2","name":"Bash","input":{"command":"cargo test"}},{"type":"tool_use","id":"call-3","name":"Edit","input":{"file_path":"src/parser.rs","old_string":"old","new_string":"new"}}]}}
+{"type":"system","subtype":"compact_boundary","timestamp":"2026-01-01T11:00:04Z"}
+{"type":"assistant","sessionId":"synthetic-claude-history","timestamp":"2026-01-01T11:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"Review complete: recovery is correct."}]}}
+{"type":"future_record","timestamp":"2026-01-01T11:00:06Z","unknown":true}
