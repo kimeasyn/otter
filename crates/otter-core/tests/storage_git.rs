@@ -74,7 +74,7 @@ async fn database_persists_searches_and_reconciles_after_restart() {
     let path = tmp.path().join("test.db");
     let db = Db::open(&path).await.unwrap();
     db.execute(
-        "INSERT INTO projects VALUES('p','Project','/synthetic','main','now','now')",
+        "INSERT INTO projects(id,name,root_path,base_branch,created_at,updated_at) VALUES('p','Project','/synthetic','main','now','now')",
         vec![],
     )
     .await
@@ -102,7 +102,7 @@ async fn database_persists_searches_and_reconciles_after_restart() {
     assert!(agent["pid"].is_null());
     assert!(db
         .execute(
-            "INSERT INTO projects VALUES('p2','Other','/synthetic','main','now','now')",
+            "INSERT INTO projects(id,name,root_path,base_branch,created_at,updated_at) VALUES('p2','Other','/synthetic','main','now','now')",
             vec![]
         )
         .await

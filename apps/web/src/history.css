@@ -40,6 +40,26 @@
   font-size: 11px;
   margin-top: 7px;
 }
+.session-subject {
+  flex: 1;
+  min-width: 0;
+}
+.session-subject strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 1.5;
+}
+.session-subject small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-row > .badge {
+  flex-shrink: 0;
+}
 .empty {
   padding: 24px;
   text-align: center;
@@ -122,6 +142,49 @@
   padding-left: 16px;
   background: #202d28;
 }
+.event.conversation-message {
+  width: fit-content;
+  max-width: 82%;
+  min-width: 0;
+  margin-top: 18px;
+  padding: 16px 20px;
+  border: 1px solid #39464e;
+  border-radius: 16px 16px 16px 4px;
+  background: #222c32;
+  text-align: left;
+}
+.event.conversation-user {
+  margin-left: auto;
+  border-color: #416453;
+  border-radius: 16px 16px 4px 16px;
+  background: #263d33;
+}
+.event.conversation-assistant {
+  margin-right: auto;
+}
+.event.conversation-reasoning {
+  border-style: dashed;
+  background: #1c272d;
+}
+.conversation-message .event-meta {
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #a8b9c1;
+}
+.conversation-message .event-meta time {
+  overflow-wrap: anywhere;
+}
+.conversation-user .badge {
+  color: #b9ead0;
+  border-color: #527662;
+}
+.conversation-message .event-text {
+  margin-bottom: 0;
+}
+.conversation-message.focused {
+  outline: 2px solid #9bd9bb;
+  outline-offset: 2px;
+}
 .file-target {
   display: block;
   margin: 12px 0;
@@ -148,6 +211,10 @@ details pre {
   border-radius: 6px;
 }
 @media (max-width: 900px) {
+  .event.conversation-message {
+    max-width: 92%;
+    padding: 12px 14px;
+  }
   .provider-grid {
     grid-template-columns: 1fr;
   }

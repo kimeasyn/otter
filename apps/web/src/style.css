@@ -315,6 +315,39 @@ main {
 .connect .wordmark {
   margin-bottom: 28px;
 }
+.registered-project {
+  border-top: 1px solid #30393e;
+  padding: 16px 0;
+}
+.registered-project-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.registered-project-open {
+  flex: 1 1 220px;
+  min-width: 0;
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+}
+.registered-project-open strong,
+.registered-project-open small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.registered-project-open small {
+  color: #8fa1aa;
+  margin-top: 6px;
+}
+.project-remove-confirm {
+  margin-top: 14px;
+  padding: 16px;
+  background: #252321;
+  border: 1px solid #665348;
+  border-radius: 8px;
+}
 @media (max-width: 900px) {
   .app {
     grid-template-columns: 165px 1fr;

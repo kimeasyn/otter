@@ -115,7 +115,7 @@ pub fn router(state: AppState, web: PathBuf) -> Router {
         )
         .route("/projects", get(projects).post(add_project))
         .route("/directories", get(directories::browse))
-        .route("/projects/{id}", get(project_detail))
+        .route("/projects/{id}", get(project_detail).delete(remove_project))
         .route("/terminals/ws", get(terminal::upgrade))
         .route("/providers", get(history::providers_list))
         .route("/profiles", get(units::profiles).post(units::add_profile))
@@ -172,8 +172,11 @@ async fn security_headers(req: Request, next: Next) -> Response {
 
 async fn projects(State(s): State<AppState>) -> ApiResult {
     Ok(Json(json!(
-        s.db.rows("SELECT * FROM projects ORDER BY name", vec![])
-            .await?
+        s.db.rows(
+            "SELECT * FROM projects WHERE removed_at IS NULL ORDER BY name",
+            vec![]
+        )
+        .await?
     )))
 }
 
@@ -195,18 +198,31 @@ async fn add_project(State(s): State<AppState>, Json(input): Json<NewProject>) -
                 .into()
         });
     let pid = id();
-    s.db.execute("INSERT INTO projects(id,name,root_path,base_branch,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-        vec![pid.clone().into(),name.into(),root.to_string_lossy().to_string().into(),base.into(),now().into(),now().into()]).await?;
+    // Atomic and idempotent, including concurrent adds and restored registrations.
+    // Keep the original ID so Work Units and session associations remain intact.
+    Ok(Json(s.db.one("INSERT INTO projects(id,name,root_path,base_branch,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(root_path) DO UPDATE SET removed_at=NULL,updated_at=excluded.updated_at RETURNING *",
+        vec![pid.into(),name.into(),root.to_string_lossy().to_string().into(),base.into(),now().into(),now().into()]).await?))
+}
+
+async fn remove_project(State(s): State<AppState>, Path(pid): Path<String>) -> ApiResult {
+    // Database-only registration change. Never call Git, filesystem deletion,
+    // worktree cleanup, or process cancellation here, even for missing folders.
+    let project = s.db.one(
+        "UPDATE projects SET removed_at=coalesce(removed_at,?),updated_at=? WHERE id=? RETURNING id,name",
+        vec![now().into(),now().into(),pid.into()],
+    ).await?;
     Ok(Json(
-        s.db.one("SELECT * FROM projects WHERE id=?", vec![pid.into()])
-            .await?,
+        json!({"id":project["id"],"name":project["name"],"removed":true,"files_untouched":true}),
     ))
 }
 
 pub async fn scan_project(s: &AppState, pid: &str) -> anyhow::Result<Value> {
     let project =
-        s.db.one("SELECT * FROM projects WHERE id=?", vec![pid.into()])
-            .await?;
+        s.db.one(
+            "SELECT * FROM projects WHERE id=? AND removed_at IS NULL",
+            vec![pid.into()],
+        )
+        .await?;
     let root = PathBuf::from(project["root_path"].as_str().unwrap_or_default());
     let base = project["base_branch"].as_str().unwrap_or("main");
     let trees = git::discover(&root, base).await?;

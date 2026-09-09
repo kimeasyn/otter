@@ -1,4 +1,4 @@
-use crate::{db::Db, id, now, providers};
+use crate::{db::Db, id, now, providers, session_titles};
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -159,9 +159,14 @@ pub async fn ingest(db: &Db, provider: &str, path: &Path) -> Result<Value> {
     let mut bytes = vec![0; prefix_len];
     file.read_exact(&mut bytes)?;
     let fingerprint = format!("{prefix_len}:{}", checksum(&bytes));
+    let native_title = if provider == "codex" {
+        session_titles::codex_name(&path, &external)
+    } else {
+        None
+    };
     let mut tx = db.0.begin().await?;
     sqlx::query("INSERT OR IGNORE INTO provider_sessions(id,provider,external_session_id,source_path,project_id,worktree_id,work_unit_id,title,cwd,started_at,last_seen_at,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,'imported')")
-        .bind(&sid).bind(provider).bind(external).bind(&source).bind(project.as_str()).bind(assoc["worktree_id"].as_str()).bind(assoc["work_unit_id"].as_str())
+        .bind(&sid).bind(provider).bind(&external).bind(&source).bind(project.as_str()).bind(assoc["worktree_id"].as_str()).bind(assoc["work_unit_id"].as_str())
         .bind(path.file_stem().unwrap_or_default().to_string_lossy().as_ref()).bind(cwd).bind(&stamp).bind(now()).execute(&mut *tx).await?;
     let mut inserted = 0;
     let mut normalized = 0;
@@ -188,25 +193,41 @@ pub async fn ingest(db: &Db, provider: &str, path: &Path) -> Result<Value> {
             warnings += 1;
         }
         for event in events {
-            if event.kind == "user.message" {
-                let title = event
-                    .text
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" ")
-                    .chars()
-                    .take(100)
-                    .collect::<String>();
-                if !title.is_empty() {
-                    sqlx::query("UPDATE provider_sessions SET title=? WHERE id=? AND title=? AND agent_id IS NULL")
-                        .bind(title).bind(&sid).bind(path.file_stem().unwrap_or_default().to_string_lossy().as_ref()).execute(&mut *tx).await?;
-                }
-            }
             sqlx::query("INSERT INTO normalized_events(session_id,raw_event_id,timestamp,kind,text,target,detail_json) VALUES(?,?,?,?,?,?,?)")
                 .bind(&sid).bind(raw.get::<i64,_>("id")).bind(timestamp).bind(&event.kind).bind(&event.text).bind(event.target).bind(event.detail.to_string()).execute(&mut *tx).await?;
             normalized += 1;
         }
     }
+    // Recompute even when no records were appended: upgrades and provider renames
+    // should also fix titles of sessions that were already imported.
+    let title = if native_title.is_some() {
+        native_title
+    } else {
+        let messages: Vec<String> = sqlx::query_scalar("SELECT substr(text,1,16000) FROM normalized_events WHERE session_id=? AND kind='user.message' ORDER BY id LIMIT 32")
+            .bind(&sid).fetch_all(&mut *tx).await?;
+        messages
+            .iter()
+            .find_map(|text| session_titles::from_message(text))
+    };
+    let title = title.unwrap_or_else(|| {
+        let project = cwd
+            .and_then(|cwd| Path::new(cwd).file_name())
+            .and_then(|name| name.to_str());
+        session_titles::compact(&format!(
+            "{} · {}",
+            project.unwrap_or(provider),
+            "Untitled session"
+        ))
+        .unwrap()
+    });
+    sqlx::query(
+        "UPDATE provider_sessions SET title=? WHERE id=? AND agent_id IS NULL AND title<>?",
+    )
+    .bind(&title)
+    .bind(&sid)
+    .bind(&title)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query(
         "UPDATE provider_sessions SET last_seen_at=?,warning_count=warning_count+? WHERE id=?",
     )

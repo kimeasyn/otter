@@ -7,6 +7,97 @@ use serde_json::json;
 use std::io::Write;
 
 #[tokio::test]
+async fn session_titles_use_provider_names_and_refresh_without_new_messages() {
+    let temp = tempfile::tempdir().unwrap();
+    let sessions = temp.path().join("sessions/2026/09/09");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let path = sessions.join("session.jsonl");
+    let fixture = include_str!("../../../fixtures/codex/history.jsonl");
+    std::fs::write(&path, fixture).unwrap();
+    let index = temp.path().join("session_index.jsonl");
+    let names = concat!(
+        "{\"id\":\"synthetic-codex-history\",\"thread_name\":\"Old name\"}\n",
+        "not valid JSON\n",
+        "{\"id\":\"another-session\",\"thread_name\":\"Unrelated name\"}\n",
+        "{\"id\":\"synthetic-codex-history\",\"thread_name\":\"파서 경계 처리 개선\"}\n",
+        "{\"id\":\"synthetic-codex-history\",\"thread_name\":\"  \"}\n",
+    );
+    std::fs::write(&index, names).unwrap();
+    let db = Db::open(&temp.path().join("otter.db")).await.unwrap();
+    ingestion::ingest(&db, "codex", &path).await.unwrap();
+    assert_eq!(
+        db.one("SELECT title FROM provider_sessions", vec![])
+            .await
+            .unwrap()["title"],
+        "파서 경계 처리 개선"
+    );
+    assert_eq!(std::fs::read_to_string(&index).unwrap(), names);
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&index)
+        .unwrap();
+    writeln!(
+        file,
+        "{}",
+        json!({"id":"synthetic-codex-history", "thread_name":"부분 레코드 파싱 수정"})
+    )
+    .unwrap();
+    let again = ingestion::ingest(&db, "codex", &path).await.unwrap();
+    assert_eq!(again["inserted"], 0);
+    assert_eq!(
+        db.one("SELECT title FROM provider_sessions", vec![])
+            .await
+            .unwrap()["title"],
+        "부분 레코드 파싱 수정"
+    );
+    assert_eq!(
+        db.one(
+            "SELECT count(*) AS n FROM search_index WHERE search_index MATCH '부분'",
+            vec![]
+        )
+        .await
+        .unwrap()["n"],
+        1
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), fixture);
+}
+
+#[tokio::test]
+async fn existing_titles_skip_scaffolding_and_use_the_actual_request() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("session.jsonl");
+    let records = [
+        json!({"type":"session_meta", "payload":{"id":"context-session", "cwd":"/repo"}}),
+        json!({"type":"response_item", "payload":{"type":"message", "role":"user", "content":[{"type":"input_text", "text":"# AGENTS.md instructions for /repo\n<INSTRUCTIONS>rules</INSTRUCTIONS>"}]}}),
+        json!({"type":"response_item", "payload":{"type":"message", "role":"user", "content":[{"type":"input_text", "text":"<environment_context>\n<cwd>/repo</cwd>\n</environment_context>"}]}}),
+        json!({"type":"response_item", "payload":{"type":"message", "role":"user", "content":[{"type":"input_text", "text":"세션 제목 표시 개선\n목록과 상세 화면에 반영해줘"}]}}),
+    ];
+    std::fs::write(
+        &path,
+        records.iter().map(|r| format!("{r}\n")).collect::<String>(),
+    )
+    .unwrap();
+    let db = Db::open(&temp.path().join("otter.db")).await.unwrap();
+    ingestion::ingest(&db, "codex", &path).await.unwrap();
+    db.execute(
+        "UPDATE provider_sessions SET title='Legacy context title'",
+        vec![],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        ingestion::ingest(&db, "codex", &path).await.unwrap()["inserted"],
+        0
+    );
+    assert_eq!(
+        db.one("SELECT title FROM provider_sessions", vec![])
+            .await
+            .unwrap()["title"],
+        "세션 제목 표시 개선"
+    );
+}
+
+#[tokio::test]
 async fn imports_fixtures_incrementally_without_duplicates_and_survives_truncation() {
     let temp = tempfile::tempdir().unwrap();
     let db_path = temp.path().join("db.sqlite");

@@ -23,7 +23,7 @@ async fn setup() -> (tempfile::TempDir, Db, serde_json::Value) {
     .unwrap();
     let db = Db::open(&temp.path().join("test.db")).await.unwrap();
     db.execute(
-        "INSERT INTO projects VALUES('p','Test',?,'main','now','now')",
+        "INSERT INTO projects(id,name,root_path,base_branch,created_at,updated_at) VALUES('p','Test',?,'main','now','now')",
         vec![repo.to_string_lossy().to_string().into()],
     )
     .await

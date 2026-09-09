@@ -179,9 +179,13 @@ export function Sessions({ onOpen }: { onOpen: (id: string) => void }) {
           </div>
         )}
         {sessions.data?.items.map((s) => (
-          <button className="list-row" key={s.id} onClick={() => onOpen(s.id)}>
-            <span>
-              <strong>{s.title}</strong>
+          <button
+            className="list-row session-row"
+            key={s.id}
+            onClick={() => onOpen(s.id)}
+          >
+            <span className="session-subject">
+              <strong title={s.title}>{s.title}</strong>
               <small>{s.cwd ?? "Unassociated session"}</small>
             </span>
             <span className="badge">
@@ -353,15 +357,21 @@ export function SessionView({
           {events.data?.items.map((event) => (
             <article
               key={event.id}
-              className={`event ${focus === String(event.id) ? "focused" : ""}`}
+              className={`event ${focus === String(event.id) ? "focused" : ""} ${tab === "Conversation" ? `conversation-message ${event.kind === "user.message" ? "conversation-user" : "conversation-assistant"} ${event.kind === "assistant.reasoning_summary" ? "conversation-reasoning" : ""}` : ""}`}
             >
               <div className="event-meta">
                 <span className="badge">
                   {event.kind === "assistant.reasoning_summary"
-                    ? "Reasoning Summary"
-                    : (event.kind ?? event.source_event_type)}
+                    ? tab === "Conversation"
+                      ? "Assistant · Reasoning Summary"
+                      : "Reasoning Summary"
+                    : tab === "Conversation"
+                      ? event.kind === "user.message"
+                        ? "User"
+                        : "Assistant"
+                      : (event.kind ?? event.source_event_type)}
                 </span>
-                <time>{event.timestamp}</time>
+                <time dateTime={event.timestamp}>{event.timestamp}</time>
                 <code>#{event.id}</code>
               </div>
               {tab === "Raw" ? (

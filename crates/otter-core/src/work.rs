@@ -183,7 +183,7 @@ pub async fn create(db: &Db, input: NewWork) -> Result<Value> {
     }
     let project = db
         .one(
-            "SELECT * FROM projects WHERE id=?",
+            "SELECT * FROM projects WHERE id=? AND removed_at IS NULL",
             vec![input.project_id.clone().into()],
         )
         .await?;

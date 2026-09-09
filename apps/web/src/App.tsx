@@ -5,16 +5,11 @@ import { Sessions, SessionView, Search } from "./History";
 import { NewWorkUnit, WorkUnits, WorkUnitView, type Unit } from "./WorkUnits";
 import type { TerminalTarget } from "./Terminal";
 import { RepositoryPicker } from "./RepositoryPicker";
+import { RegisteredProjects, type Project } from "./RegisteredProjects";
 const Terminal = lazy(() =>
   import("./Terminal").then((m) => ({ default: m.Terminal })),
 );
 
-type Project = {
-  id: string;
-  name: string;
-  root_path: string;
-  base_branch: string;
-};
 export type Tree = {
   id: string;
   path: string;
@@ -139,6 +134,7 @@ export function App() {
     queryKey: ["projects", token],
     queryFn: () => api<Project[]>("/projects"),
     enabled: health.isSuccess,
+    refetchInterval: 10000,
   });
   const detail = useQuery({
     queryKey: ["project", selected],
@@ -150,8 +146,10 @@ export function App() {
     mutationFn: () => api<Project>("/projects", { path }),
     onSuccess: (p) => {
       setSelected(p.id);
+      setTree(null);
       setPath("");
       client.invalidateQueries({ queryKey: ["projects"] });
+      client.invalidateQueries({ queryKey: ["project", p.id] });
     },
   });
   const tree =
@@ -284,6 +282,19 @@ export function App() {
               <p className="error" role="alert">
                 {(projects.error || detail.error)?.message}
               </p>
+            )}
+            {!selected && (
+              <RegisteredProjects
+                projects={projects.data ?? []}
+                loading={projects.isLoading}
+                onOpen={(id) => { setSelected(id); setTree(null); add.reset(); }}
+                onRemoved={(id) => {
+                  setTree(null);
+                  client.removeQueries({ queryKey: ["project", id] });
+                  client.invalidateQueries({ queryKey: ["projects"] });
+                  add.reset();
+                }}
+              />
             )}
             {!selected && (
               <section className="panel">

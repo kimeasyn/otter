@@ -6,6 +6,177 @@ use otter_core::db::Db;
 use otterd::{router, AppState};
 use tower::ServiceExt;
 
+async fn project_request(
+    app: &axum::Router,
+    method: &str,
+    route: &str,
+    body: serde_json::Value,
+    authorized: bool,
+) -> (StatusCode, serde_json::Value) {
+    use http_body_util::BodyExt;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(route)
+                .header("host", "localhost:4317")
+                .header(
+                    "authorization",
+                    if authorized { "Bearer token" } else { "" },
+                )
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    (status, body)
+}
+
+#[tokio::test]
+async fn project_registration_is_idempotent_and_removal_preserves_files_and_history() {
+    use otter_core::{git, work};
+    use serde_json::{json, Value};
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    std::fs::create_dir_all(repo.join("nested")).unwrap();
+    git::run(&repo, &["init", "-b", "main"]).await.unwrap();
+    std::fs::write(repo.join("tracked.txt"), "committed content").unwrap();
+    git::run(&repo, &["add", "tracked.txt"]).await.unwrap();
+    git::run(
+        &repo,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "initial",
+        ],
+    )
+    .await
+    .unwrap();
+    let db = Db::open(&temp.path().join("otter.db")).await.unwrap();
+    let state = AppState::new(db.clone(), "token".into());
+    let app = router(state.clone(), temp.path().into());
+    let (status, project) =
+        project_request(&app, "POST", "/api/projects", json!({"path":repo}), true).await;
+    assert_eq!(status, StatusCode::OK);
+    let pid = project["id"].as_str().unwrap();
+    let route = format!("/api/projects/{pid}");
+    let (first, second) = tokio::join!(
+        project_request(&app, "POST", "/api/projects", json!({"path":repo}), true),
+        project_request(
+            &app,
+            "POST",
+            "/api/projects",
+            json!({"path":repo.join("nested")}),
+            true
+        ),
+    );
+    for (status, duplicate) in [first, second] {
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(duplicate["id"], project["id"]);
+    }
+    let worktree = temp.path().join("feature");
+    let input = serde_json::from_value(json!({"project_id":pid,"title":"Keep this work","base_branch":"main","branch":"feat/keep","worktree_path":worktree,"team":[{"name":"Planner","provider":"fake","role":"planner","model":null}]})).unwrap();
+    work::create(&db, input).await.unwrap();
+    otterd::scan_project(&state, pid).await.unwrap();
+    db.execute("INSERT INTO provider_sessions(id,provider,external_session_id,project_id,title,cwd,started_at,last_seen_at,status) VALUES('session','codex','keep',?,'Keep this history',?,'now','now','imported')", vec![pid.into(),repo.to_string_lossy().to_string().into()]).await.unwrap();
+    std::fs::write(repo.join("tracked.txt"), "uncommitted edits").unwrap();
+    std::fs::write(repo.join("untracked.txt"), "untracked file").unwrap();
+    std::fs::write(worktree.join("work.txt"), "worktree edits").unwrap();
+    let index = std::fs::read(repo.join(".git/index")).unwrap();
+    let head = std::fs::read(repo.join(".git/HEAD")).unwrap();
+    let before = git::run(&repo, &["worktree", "list", "--porcelain"])
+        .await
+        .unwrap();
+    assert_eq!(
+        project_request(&app, "DELETE", &route, Value::Null, false)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        project_request(&app, "GET", "/api/projects", Value::Null, true)
+            .await
+            .1
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    for _ in 0..2 {
+        let (status, removed) = project_request(&app, "DELETE", &route, Value::Null, true).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(removed["files_untouched"], true);
+    }
+    assert!(
+        project_request(&app, "GET", "/api/projects", Value::Null, true)
+            .await
+            .1
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+    assert_eq!(std::fs::read(repo.join(".git/HEAD")).unwrap(), head);
+    assert_eq!(
+        std::fs::read_to_string(repo.join("tracked.txt")).unwrap(),
+        "uncommitted edits"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join("untracked.txt")).unwrap(),
+        "untracked file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("work.txt")).unwrap(),
+        "worktree edits"
+    );
+    assert_eq!(
+        git::run(&repo, &["worktree", "list", "--porcelain"])
+            .await
+            .unwrap(),
+        before
+    );
+    for table in ["work_units", "provider_sessions", "worktrees"] {
+        assert!(
+            db.one(&format!("SELECT count(*) AS n FROM {table}"), vec![])
+                .await
+                .unwrap()["n"]
+                .as_i64()
+                .unwrap()
+                > 0
+        );
+    }
+    let restored = project_request(&app, "POST", "/api/projects", json!({"path":repo}), true).await;
+    assert_eq!(restored.0, StatusCode::OK);
+    assert_eq!(restored.1["id"], project["id"]);
+    assert!(restored.1["removed_at"].is_null());
+    assert_eq!(
+        project_request(&app, "GET", "/api/projects", Value::Null, true)
+            .await
+            .1
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // Even a folder that no longer exists can be unregistered, without touching it.
+    std::fs::rename(&repo, temp.path().join("moved-repo")).unwrap();
+    assert_eq!(
+        project_request(&app, "DELETE", &route, Value::Null, true)
+            .await
+            .0,
+        StatusCode::OK
+    );
+}
+
 #[tokio::test]
 async fn directory_browser_requires_auth_and_lists_only_folders() {
     use http_body_util::BodyExt;
@@ -133,7 +304,7 @@ async fn project_rescan_uses_unit_base_and_associates_only_proven_history_links(
     .unwrap();
     let db = Db::open(&temp.path().join("test.db")).await.unwrap();
     db.execute(
-        "INSERT INTO projects VALUES('p','Repo',?,'main','now','now')",
+        "INSERT INTO projects(id,name,root_path,base_branch,created_at,updated_at) VALUES('p','Repo',?,'main','now','now')",
         vec![repo.to_string_lossy().to_string().into()],
     )
     .await
@@ -248,7 +419,7 @@ async fn merge_state_reports_actual_overlapping_files_without_claiming_conflict(
     .unwrap();
     let db = Db::open(&temp.path().join("test.db")).await.unwrap();
     db.execute(
-        "INSERT INTO projects VALUES('p','Repo',?,'main','now','now')",
+        "INSERT INTO projects(id,name,root_path,base_branch,created_at,updated_at) VALUES('p','Repo',?,'main','now','now')",
         vec![repo.to_string_lossy().to_string().into()],
     )
     .await

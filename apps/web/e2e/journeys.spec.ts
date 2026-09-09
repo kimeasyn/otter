@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { mkdtemp, readFile, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 
@@ -110,6 +110,11 @@ test("project, worktree, synthetic team workflow, history search and restart", a
       page.getByRole("heading", { name: "Workspace Map" }),
     ).toBeVisible();
     await expect(page.getByText("↑0 ↓0")).toBeVisible();
+    await page.getByRole("button", { name: "▦ Projects", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Registered projects (1)" })).toBeVisible();
+    await page.getByLabel("Repository path", { exact: true }).fill(repo);
+    await page.getByRole("button", { name: "Add project", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Workspace Map" })).toBeVisible();
     await page
       .getByRole("button", { name: "+ New Work Unit", exact: true })
       .click();
@@ -239,18 +244,40 @@ test("project, worktree, synthetic team workflow, history search and restart", a
     await page
       .getByText("Import a specific session file", { exact: true })
       .click();
+    const codexSessions = join(temp, "sessions");
+    await mkdir(codexSessions);
+    const codexSession = join(codexSessions, "history.jsonl");
+    await writeFile(
+      codexSession,
+      await readFile(resolve("../../fixtures/codex/history.jsonl")),
+    );
+    await writeFile(
+      join(temp, "session_index.jsonl"),
+      JSON.stringify({
+        id: "synthetic-codex-history",
+        thread_name: "파서 경계 처리 개선",
+      }) + "\n",
+    );
     await page
       .getByLabel("JSONL path on daemon machine")
-      .fill(resolve("../../fixtures/codex/history.jsonl"));
+      .fill(codexSession);
     await page
       .getByRole("button", { name: "Import session", exact: true })
       .click();
     await expect(
       page.getByRole("heading", {
-        name: "Fix the river otter parser",
+        name: "파서 경계 처리 개선",
         exact: true,
       }),
     ).toBeVisible();
+    await page.getByRole("button", { name: "◷ Sessions", exact: true }).click();
+    const subject = page.locator(".session-subject strong", { hasText: "파서 경계 처리 개선" });
+    await expect(subject).toHaveAttribute("title", "파서 경계 처리 개선");
+    await page.screenshot({
+      path: resolve("../../artifacts/screenshots/session-titles.png"),
+      fullPage: true,
+    });
+    await subject.click();
     for (const tab of [
       "Conversation",
       "Actions",
@@ -266,6 +293,29 @@ test("project, worktree, synthetic team workflow, history search and restart", a
     await expect(
       page.locator(".event .badge").filter({ hasText: /tool\./ }),
     ).toHaveCount(0);
+    const userMessage = page.locator(".conversation-user");
+    const assistantMessages = page.locator(".conversation-assistant");
+    await expect(userMessage).toHaveCount(1);
+    await expect(assistantMessages).toHaveCount(2);
+    await expect(page.locator(".conversation-reasoning .badge")).toHaveText(
+      "Assistant · Reasoning Summary",
+    );
+    for (const width of [1440, 600]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const userBox = (await userMessage.boundingBox())!;
+      const assistantBox = (await assistantMessages.last().boundingBox())!;
+      expect(userBox.x).toBeGreaterThan(assistantBox.x + 10);
+      expect(userBox.x + userBox.width).toBeGreaterThan(
+        assistantBox.x + assistantBox.width + 10,
+      );
+      expect(await page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(width);
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.screenshot({
+      path: resolve("../../artifacts/screenshots/conversation.png"),
+      fullPage: true,
+    });
     const imported = await fetch(connection.url + "/api/history/import", {
       method: "POST",
       headers: {
@@ -274,7 +324,7 @@ test("project, worktree, synthetic team workflow, history search and restart", a
       },
       body: JSON.stringify({
         provider: "codex",
-        path: resolve("../../fixtures/codex/history.jsonl"),
+        path: codexSession,
       }),
     });
     expect((await imported.json()).inserted).toBe(0);
@@ -311,6 +361,31 @@ test("project, worktree, synthetic team workflow, history search and restart", a
     await expect(
       page.getByRole("tab", { name: "Overview", exact: true }),
     ).toHaveAttribute("aria-selected", "true");
+    await page.getByRole("button", { name: "▦ Projects", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Registered projects (1)" })).toBeVisible();
+    await page.getByRole("button", { name: "Remove repo from Otter", exact: true }).click();
+    await expect(page.getByText(/Only the registration is removed/)).toBeVisible();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.locator(".registered-project")).toHaveCount(1);
+    await page.getByRole("button", { name: "Remove repo from Otter", exact: true }).click();
+    await page.screenshot({
+      path: resolve("../../artifacts/screenshots/registered-projects.png"),
+      fullPage: true,
+    });
+    const headBeforeRemoval = git("rev-parse", "HEAD").toString();
+    const worktreesBeforeRemoval = git("worktree", "list", "--porcelain").toString();
+    await page.getByRole("button", { name: "Remove registration", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("Files and history were kept");
+    await expect(page.getByRole("heading", { name: "Registered projects (0)" })).toBeVisible();
+    expect(git("rev-parse", "HEAD").toString()).toBe(headBeforeRemoval);
+    expect(git("worktree", "list", "--porcelain").toString()).toBe(worktreesBeforeRemoval);
+    expect((await apiGet(`/work-units/${unit.id}`)).work_unit.id).toBe(unit.id);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Registered projects (0)" })).toBeVisible();
+    await page.getByLabel("Repository path", { exact: true }).fill(repo);
+    await page.getByRole("button", { name: "Add project", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Workspace Map" })).toBeVisible();
+    expect(await apiGet("/projects")).toHaveLength(1);
     expect(errors).toEqual([]);
   } finally {
     await stop();

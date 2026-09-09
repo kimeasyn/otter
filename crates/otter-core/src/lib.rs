@@ -3,6 +3,7 @@ pub mod execution;
 pub mod git;
 pub mod ingestion;
 pub mod providers;
+pub mod session_titles;
 pub mod work;
 
 pub fn id() -> String {

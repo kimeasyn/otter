@@ -26,7 +26,7 @@ pub async fn upgrade(
 ) -> Result<Response, ApiError> {
     let project =
         s.db.one(
-            "SELECT root_path FROM projects WHERE id=?",
+            "SELECT root_path FROM projects WHERE id=? AND removed_at IS NULL",
             vec![target.project_id.clone().into()],
         )
         .await?;

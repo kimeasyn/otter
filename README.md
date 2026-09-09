@@ -94,6 +94,12 @@ Windows/macOS 네이티브 패키지는 이 Linux 서버에서 만들지 않습�
 5. 세션 탭과 Search에서 결과를 찾습니다. 재시작 후에도 기록이 남습니다.
 6. 실제 작업에는 설치·인증된 제공자의 프로필을 선택합니다.
 
+Projects의 **Registered projects**에서 등록된 저장소를 열거나 **Remove from Otter**로
+등록만 해제할 수 있습니다. 확인 후에도 실제 디렉토리, 파일, Git 브랜치와 워크트리는
+변경하지 않으며 기존 Work Unit·세션 기록과 실행 중인 작업도 유지됩니다.
+같은 경로를 다시 추가하면 기존 등록을 복원합니다. 이미 등록된 경로는 중복 생성하지
+않고 기존 프로젝트를 엽니다.
+
 ## Codex / Claude 연동
 
 데몬 PATH에서 CLI를 감지합니다. 현재 서버에서 관찰한 Codex는 `codex-cli 0.153.4`이며
@@ -108,6 +114,10 @@ Builder에는 workspace-write sandbox를 요청합니다. sandbox 우회 옵션�
 기본 가져오기 위치는 `~/.codex/sessions`, `~/.codex/archived_sessions`,
 `~/.claude/projects`입니다. 파일은 읽기 전용으로 가져오고 10초마다 제한된 배치를
 처리합니다. 특정 JSONL 파일을 직접 가져올 수도 있습니다.
+Session history 제목은 Codex의 `session_index.jsonl`에 저장된 주제명을 우선
+사용합니다. 별도 제목이 없으면 환경 정보와 코드 블록을 제외한 사용자 요청에서
+최대 48자의 짧은 제목을 추출합니다. 기존 세션과 Codex에서 변경한 제목도 다음
+스캔에 갱신되며, 별도 AI 호출이나 원본 세션 파일 수정은 하지 않습니다.
 `OTTER_CODEX_BIN`/`OTTER_CLAUDE_BIN`, 세션 경로 설정 등은
 [Provider adapters](docs/PROVIDER_ADAPTERS.md)를 참고하세요.
 
