@@ -509,7 +509,14 @@ export function WorkUnitView({
   onTerminal: (target: TerminalTarget) => void;
 }) {
   const client = useQueryClient();
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(
+    () => sessionStorage.getItem(`otter-draft:${id}`) ?? "",
+  );
+  const [sent, setSent] = useState(false);
+  const [recipient, setRecipient] = useState(
+    () => sessionStorage.getItem(`otter-recipient:${id}`) ?? "",
+  );
+  const [section, setSection] = useState("Work");
   const [editing, setEditing] = useState<Profile | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const detail = useQuery({
@@ -541,7 +548,13 @@ export function WorkUnitView({
       body?: unknown;
       method?: string;
     }) => api(path, body, method),
-    onSuccess: refresh,
+    onSuccess: (_, request) => {
+      refresh();
+      if (request.path.endsWith("/message")) {
+        setMessage("");
+        setSent(true);
+      }
+    },
   });
   const save = useMutation({
     mutationFn: () =>
@@ -560,17 +573,30 @@ export function WorkUnitView({
   const running = d?.agents.some((a) => a.status === "running");
   const next = ["planner", "builder", "reviewer"].find(
     (role) =>
+      d?.agents.some((a) => a.role === role) &&
       !d?.agents.some((a) => a.role === role && a.status === "completed"),
   );
   useEffect(() => {
-    setMessage("");
-  }, [id]);
+    if (message) sessionStorage.setItem(`otter-draft:${id}`, message);
+    else sessionStorage.removeItem(`otter-draft:${id}`);
+  }, [id, message]);
+  useEffect(() => {
+    if (recipient) sessionStorage.setItem(`otter-recipient:${id}`, recipient);
+    else sessionStorage.removeItem(`otter-recipient:${id}`);
+  }, [id, recipient]);
   if (!u || !d)
     return (
       <p role={detail.error ? "alert" : undefined}>
         {detail.error?.message ?? "Loading Work Unit…"}
       </p>
     );
+  const selectedRecipient =
+    recipient ||
+    d.agents.find((a) => a.role === "builder")?.name ||
+    d.agents[0]?.name ||
+    "";
+  const recipientMissing =
+    !!selectedRecipient && !d.agents.some((a) => a.name === selectedRecipient);
   const states: Record<string, string[]> = {
     draft: ["active", "archived"],
     active: ["waiting", "review", "failed"],
@@ -582,7 +608,7 @@ export function WorkUnitView({
   };
   return (
     <>
-      <div className="page-title">
+      <div className="page-title work-unit-heading">
         <div className="eyebrow">WORK UNIT · {u.status}</div>
         <h1>{u.title}</h1>
         <button
@@ -605,9 +631,22 @@ export function WorkUnitView({
         </div>
       </div>
       {action.error && <p role="alert">{action.error.message}</p>}
+      <div className="tabs" role="tablist" aria-label="Work Unit sections">
+        {["Work", "History", "Review"].map((name) => (
+          <button
+            key={name}
+            role="tab"
+            aria-selected={section === name}
+            className={section === name ? "selected" : ""}
+            onClick={() => setSection(name)}
+          >
+            {name}
+          </button>
+        ))}
+      </div>
       <div className="unit-columns">
-        <div>
-          <section className="panel">
+        <div className="unit-primary">
+          <section className="panel workflow-panel" hidden={section !== "Work"}>
             <div className="section-title">
               <h2>Planner → Builder → Reviewer</h2>
               <button
@@ -635,7 +674,7 @@ export function WorkUnitView({
               persisted handoff.
             </p>
             {d.artifacts.map((a) => (
-              <details className="artifact" key={a.id} open>
+              <details className="artifact" key={a.id}>
                 <summary>{a.kind} result</summary>
                 <pre>{a.body}</pre>
                 <button onClick={() => onSession(a.session_id)}>
@@ -652,33 +691,65 @@ export function WorkUnitView({
               </details>
             ))}
           </section>
-          <section className="panel">
+          <section className="panel composer-panel" hidden={section !== "Work"}>
             <h2>Address an agent</h2>
+            {sent && (
+              <p role="status">
+                Request sent. The agent response is available in its Session.
+              </p>
+            )}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 action.mutate({
                   path: `/work-units/${id}/message`,
-                  body: { message },
+                  body: {
+                    message: message.trimStart().startsWith("@")
+                      ? message
+                      : `@${selectedRecipient} ${message}`,
+                  },
                 });
               }}
             >
-              <label>
-                Request
-                <textarea
-                  rows={3}
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  placeholder="@Builder implement the current task."
-                  required
-                />
-              </label>
+              <label htmlFor={`recipient-${id}`}>Message recipient</label>
+              <select
+                id={`recipient-${id}`}
+                value={selectedRecipient}
+                onChange={(e) => setRecipient(e.target.value)}
+              >
+                {recipientMissing && (
+                  <option value={selectedRecipient} disabled>
+                    {selectedRecipient} · unavailable — choose an agent
+                  </option>
+                )}
+                {d.agents.map((a) => (
+                  <option key={a.id} value={a.name}>
+                    {a.name} · {a.provider} · {a.status}
+                  </option>
+                ))}
+              </select>
+              <label htmlFor={`request-${id}`}>Request</label>
+              <textarea
+                id={`request-${id}`}
+                rows={3}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Describe the next step for the selected agent…"
+                required
+              />
               <div className="modal-actions">
                 <span className="muted">
-                  Names resolve case-insensitively within this team.
+                  Sent to the selected agent. An explicit @name overrides it.
                 </span>
                 <button
-                  disabled={running || action.isPending}
+                  disabled={
+                    running ||
+                    action.isPending ||
+                    !message.trim() ||
+                    (recipientMissing &&
+                      !message.trimStart().startsWith("@")) ||
+                    !d.agents.length
+                  }
                   className="primary"
                 >
                   Send request
@@ -686,7 +757,7 @@ export function WorkUnitView({
               </div>
             </form>
           </section>
-          <section className="panel">
+          <section className="panel" hidden={section !== "History"}>
             <h2>Timeline</h2>
             {d.timeline.map((t) => (
               <article className="event" key={t.id}>
@@ -702,7 +773,7 @@ export function WorkUnitView({
               </article>
             ))}
           </section>
-          <section className="panel">
+          <section className="panel" hidden={section !== "History"}>
             <h2>Linked sessions</h2>
             {d.sessions.map((s) => (
               <button
@@ -717,7 +788,55 @@ export function WorkUnitView({
               </button>
             ))}
           </section>
-          <details className="panel">
+          <section className="panel" hidden={section !== "Review"}>
+            <h2>Merge Status</h2>
+            <span className="badge warning">{d.merge.readiness}</span>
+            <p>
+              <code>
+                {u.branch} → {u.base_branch}
+              </code>
+            </p>
+            {d.git_error && <p role="alert">{d.git_error}</p>}
+            <dl className="facts compact">
+              <dt>Ahead / behind</dt>
+              <dd>
+                ↑{d.git?.ahead ?? "?"} ↓{d.git?.behind ?? "?"}
+              </dd>
+              <dt>Working tree</dt>
+              <dd>
+                {!d.git
+                  ? "Unavailable"
+                  : d.git.dirty
+                    ? "Uncommitted changes"
+                    : "Clean"}
+              </dd>
+              <dt>Observed tests</dt>
+              <dd>{d.merge.test.status}</dd>
+              <dt>Reviewer</dt>
+              <dd>
+                {d.merge.review.status}
+                {d.merge.review.synthetic ? " (synthetic)" : ""}
+              </dd>
+            </dl>
+            <p className="muted">{d.merge.test.scope}</p>
+            <h3>Changed files</h3>
+            {d.git?.changed_files.map((f) => (
+              <div key={f}>
+                <code>{f}</code>
+              </div>
+            ))}
+            {d.merge.overlaps.map((o) => (
+              <p className="warning" key={o.branch}>
+                Potential overlap with {o.branch}: {o.files.join(", ")}
+              </p>
+            ))}
+            <p className="muted">{d.merge.note}</p>
+          </section>
+          <details
+            className="panel"
+            hidden={section !== "Review"}
+            open={section === "Review"}
+          >
             <summary>Environment fingerprint and observed commits</summary>
             <pre>{JSON.stringify(u.environment_json, null, 2)}</pre>
             {d.commits.map((c) => (
@@ -759,7 +878,10 @@ export function WorkUnitView({
                     : a.provider}{" "}
                   · {a.model || "provider default"}
                 </p>
-                <small className="muted">{a.permissions}</small>
+                <details className="agent-permissions">
+                  <summary>Permissions</summary>
+                  <small className="muted">{a.permissions}</small>
+                </details>
                 {a.error && <p role="alert">{a.error}</p>}
                 <div className="agent-actions">
                   <button
@@ -821,50 +943,6 @@ export function WorkUnitView({
             ))}
           </section>
           <section className="panel">
-            <h2>Merge Status</h2>
-            <span className="badge warning">{d.merge.readiness}</span>
-            <p>
-              <code>
-                {u.branch} → {u.base_branch}
-              </code>
-            </p>
-            {d.git_error && <p role="alert">{d.git_error}</p>}
-            <dl className="facts compact">
-              <dt>Ahead / behind</dt>
-              <dd>
-                ↑{d.git?.ahead ?? "?"} ↓{d.git?.behind ?? "?"}
-              </dd>
-              <dt>Working tree</dt>
-              <dd>
-                {!d.git
-                  ? "Unavailable"
-                  : d.git.dirty
-                    ? "Uncommitted changes"
-                    : "Clean"}
-              </dd>
-              <dt>Observed tests</dt>
-              <dd>{d.merge.test.status}</dd>
-              <dt>Reviewer</dt>
-              <dd>
-                {d.merge.review.status}
-                {d.merge.review.synthetic ? " (synthetic)" : ""}
-              </dd>
-            </dl>
-            <p className="muted">{d.merge.test.scope}</p>
-            <h3>Changed files</h3>
-            {d.git?.changed_files.map((f) => (
-              <div key={f}>
-                <code>{f}</code>
-              </div>
-            ))}
-            {d.merge.overlaps.map((o) => (
-              <p className="warning" key={o.branch}>
-                Potential overlap with {o.branch}: {o.files.join(", ")}
-              </p>
-            ))}
-            <p className="muted">{d.merge.note}</p>
-          </section>
-          <section className="panel">
             <h2>Needs Attention</h2>
             {running && <p>Agent process is active.</p>}
             {d.agents
@@ -896,8 +974,8 @@ export function WorkUnitView({
                 </p>
               )}
           </section>
-          <section className="panel">
-            <h2>Work Unit status</h2>
+          <details className="panel">
+            <summary>Work Unit status · {u.status}</summary>
             <label>
               Move to
               <select
@@ -920,7 +998,7 @@ export function WorkUnitView({
             <p className="muted">
               Archiving preserves branches, worktrees, and history.
             </p>
-          </section>
+          </details>
         </div>
       </div>
       {editing && (

@@ -6,6 +6,10 @@ export OTTER_DATA_DIR="${OTTER_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/ot
 otter_print_url() {
   if [ ! -f "$OTTER_DATA_DIR/connection.json" ]; then printf 'Otter is not running or connection details are unavailable.\n' >&2; return 1; fi
   otter_url="$(sed -n 's/.*"url":"\([^"]*\)".*/\1/p' "$OTTER_DATA_DIR/connection.json")"
+  if [ "$(sed -n 's/.*"dev_no_auth":\(true\|false\).*/\1/p' "$OTTER_DATA_DIR/connection.json")" = 'true' ]; then
+    printf '%s/\n' "$otter_url"
+    return
+  fi
   otter_token="$(sed -n 's/.*"token":"\([^"]*\)".*/\1/p' "$OTTER_DATA_DIR/connection.json")"
   printf '%s/#token=%s\n' "$otter_url" "$otter_token"
 }

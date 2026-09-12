@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, useAuth } from "./api";
 import { Sessions, SessionView, Search } from "./History";
@@ -6,9 +6,9 @@ import { NewWorkUnit, WorkUnits, WorkUnitView, type Unit } from "./WorkUnits";
 import type { TerminalTarget } from "./Terminal";
 import { RepositoryPicker } from "./RepositoryPicker";
 import { RegisteredProjects, type Project } from "./RegisteredProjects";
-const Terminal = lazy(() =>
-  import("./Terminal").then((m) => ({ default: m.Terminal })),
-);
+import { useNavigation } from "./navigation";
+import { TerminalDock, terminalKey, type TerminalTab } from "./TerminalDock";
+import { CommitGraph } from "./CommitGraph";
 
 export type Tree = {
   id: string;
@@ -46,12 +46,9 @@ export function WorkspaceMap({
     <section className="panel workspace">
       <div className="section-title">
         <h2>Workspace Map</h2>
-        <span className="muted">Live Git observations</span>
-      </div>
-      <div className="base-line">
-        <span className="dot" />
-        {base}
-        <span className="line" />
+        <span className="muted">
+          {trees.length} worktrees · base {base}
+        </span>
       </div>
       <div className="tree-list">
         {trees.map((tree) => (
@@ -76,7 +73,6 @@ export function WorkspaceMap({
                 </span>
               )}
             </span>
-            <code>{tree.head.slice(0, 8)}</code>
             <span className={tree.behind ? "warning" : undefined}>
               ↑{tree.ahead ?? "?"} ↓{tree.behind ?? "?"}
             </span>
@@ -89,11 +85,6 @@ export function WorkspaceMap({
                   ? "Uncommitted"
                   : "Clean"}
             </span>
-            <span className="muted">
-              {tree.agents
-                .map((a) => `${a.name} · ${a.provider} · ${a.status}`)
-                .join(", ") || "No assigned agent"}
-            </span>
           </button>
         ))}
       </div>
@@ -102,37 +93,52 @@ export function WorkspaceMap({
 }
 
 export function App() {
+  const main = useRef<HTMLElement>(null);
   const { token, setToken } = useAuth();
   const [inputToken, setInputToken] = useState("");
-  const [selected, setSelected] = useState("");
+  const { location, navigate } = useNavigation();
+  const { project: selected, view, session, focus, unit } = location;
+  useEffect(() => {
+    main.current?.scrollTo(0, 0);
+  }, [selected, view, session, unit]);
   const [path, setPath] = useState("");
   const [browseRepository, setBrowseRepository] = useState(false);
   const [selectedTree, setTree] = useState<Tree | null>(null);
-  const [view, setView] = useState("projects");
-  const [session, setSession] = useState("");
-  const [focus, setFocus] = useState<string | undefined>();
-  const [unit, setUnit] = useState("");
   const [newWork, setNewWork] = useState(false);
-  const [terminal, setTerminal] = useState<TerminalTarget | null>(null);
+  const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
+  const [activeTerminal, setActiveTerminal] = useState("");
+  const setTerminal = (target: TerminalTarget) => {
+    const id = terminalKey(target);
+    setTerminalTabs((tabs) =>
+      tabs.some((t) => t.id === id) ? tabs : [...tabs, { id, target }],
+    );
+    setActiveTerminal(id);
+  };
   const openUnit = (id: string) => {
-    setUnit(id);
-    setView("unit");
+    const project =
+      allUnits.data?.find((u) => u.id === id)?.project_id ?? selected;
+    navigate({ view: "unit", unit: id, project });
   };
   const openSession = (id: string, event?: string) => {
-    setSession(id);
-    setFocus(event);
-    setView("session");
+    navigate({ view: "session", session: id, focus: event });
   };
   const client = useQueryClient();
   const health = useQuery({
     queryKey: ["health", token],
-    queryFn: () => api<{ name: string; version: string }>("/health"),
-    enabled: !!token,
+    queryFn: () =>
+      api<{ name: string; version: string; dev_no_auth?: boolean }>("/health"),
+    retry: false,
     refetchInterval: 10000,
   });
   const projects = useQuery({
     queryKey: ["projects", token],
     queryFn: () => api<Project[]>("/projects"),
+    enabled: health.isSuccess,
+    refetchInterval: 10000,
+  });
+  const allUnits = useQuery({
+    queryKey: ["work-units"],
+    queryFn: () => api<Unit[]>("/work-units"),
     enabled: health.isSuccess,
     refetchInterval: 10000,
   });
@@ -145,7 +151,7 @@ export function App() {
   const add = useMutation({
     mutationFn: () => api<Project>("/projects", { path }),
     onSuccess: (p) => {
-      setSelected(p.id);
+      navigate({ view: "projects", project: p.id });
       setTree(null);
       setPath("");
       client.invalidateQueries({ queryKey: ["projects"] });
@@ -155,6 +161,28 @@ export function App() {
   const tree =
     detail.data?.worktrees.find((t) => t.id === selectedTree?.id) ??
     selectedTree;
+  useEffect(() => {
+    const shortcuts = (event: KeyboardEvent) => {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+        return;
+      const target = (
+        {
+          "1": "projects",
+          "2": "units",
+          "3": "sessions",
+          "4": "search",
+        } as Record<string, string>
+      )[event.key];
+      if (!target) return;
+      event.preventDefault();
+      navigate({
+        view: target,
+        ...(target === "projects" ? { project: "" } : {}),
+      });
+    };
+    window.addEventListener("keydown", shortcuts);
+    return () => window.removeEventListener("keydown", shortcuts);
+  }, [navigate]);
   if (!health.isSuccess)
     return (
       <main className="connect panel">
@@ -189,41 +217,74 @@ export function App() {
       </main>
     );
   return (
-    <div className="app">
+    <div className="app workbench">
       <header>
         <div className="wordmark">
           ◉ Otter <span className="badge">BETA</span>
         </div>
-        <span className="muted">AI Development Control Center</span>
+        <div className="workspace-location">
+          <button
+            onClick={() => history.back()}
+            aria-label="Go back"
+            title="Back to the previous screen"
+          >
+            ←
+          </button>
+          <span>
+            {projects.data?.find((p) => p.id === selected)?.name ??
+              "All projects"}
+          </span>
+          <span className="muted">
+            /{" "}
+            {view === "unit"
+              ? "Work Unit"
+              : view === "session"
+                ? "Session"
+                : view === "units"
+                  ? "Work Units"
+                  : view === "projects"
+                    ? "Workspace"
+                    : view === "sessions"
+                      ? "Sessions"
+                      : "Search"}
+          </span>
+        </div>
         <span className="connection">● Local daemon connected</span>
+        {health.data.dev_no_auth && (
+          <span
+            className="badge warning"
+            title="Local processes can access Otter. Do not expose this port."
+          >
+            Dev · no token
+          </span>
+        )}
       </header>
       <aside>
         <div className="eyebrow">WORKSPACE</div>
         <button
           className={`nav ${view === "projects" ? "active" : ""}`}
           onClick={() => {
-            setSelected("");
             setTree(null);
-            setView("projects");
+            navigate({ view: "projects", project: "" });
           }}
         >
           ▦ Projects
         </button>
         <button
           className={`nav ${view === "units" || view === "unit" ? "active" : ""}`}
-          onClick={() => setView("units")}
+          onClick={() => navigate({ view: "units" })}
         >
           ▤ Work Units
         </button>
         <button
           className={`nav ${view === "sessions" || view === "session" ? "active" : ""}`}
-          onClick={() => setView("sessions")}
+          onClick={() => navigate({ view: "sessions" })}
         >
           ◷ Sessions
         </button>
         <button
           className={`nav ${view === "search" ? "active" : ""}`}
-          onClick={() => setView("search")}
+          onClick={() => navigate({ view: "search" })}
         >
           ⌕ Search
         </button>
@@ -233,30 +294,107 @@ export function App() {
             key={p.id}
             className={`nav ${p.id === selected && view === "projects" ? "active" : ""}`}
             onClick={() => {
-              setSelected(p.id);
               setTree(null);
-              setView("projects");
+              navigate({ view: "projects", project: p.id });
             }}
           >
             ⑂ {p.name}
           </button>
         ))}
+        <button
+          className="nav open-folder"
+          onClick={() => {
+            navigate({ view: "projects", project: "" });
+            setBrowseRepository(true);
+          }}
+        >
+          + Open folder…
+        </button>
+        {!!selected && (
+          <>
+            <div className="eyebrow">PROJECT WORK</div>
+            {allUnits.data
+              ?.filter((u) => u.project_id === selected)
+              .slice(0, 8)
+              .map((u) => (
+                <button
+                  key={u.id}
+                  className={`nav task-shortcut ${view === "unit" && unit === u.id ? "active" : ""}`}
+                  onClick={() => openUnit(u.id)}
+                  title={`${u.title} · ${u.status}`}
+                >
+                  <span>{u.title}</span>
+                  <small>{u.status}</small>
+                </button>
+              ))}
+            <button className="nav" onClick={() => setNewWork(true)}>
+              + New task
+            </button>
+          </>
+        )}
         <div className="sidebar-footer">
           Otter {health.data.version}
           <br />
           Local-first · No telemetry
+          <details>
+            <summary>Keyboard shortcuts</summary>Alt+1 Projects
+            <br />
+            Alt+2 Work Units
+            <br />
+            Alt+3 Sessions
+            <br />
+            Alt+4 Search
+          </details>
         </div>
       </aside>
-      <main>
-        {view === "sessions" ? (
-          <Sessions onOpen={openSession} />
-        ) : view === "session" ? (
-          <SessionView
-            key={`${session}-${focus}`}
-            id={session}
-            focus={focus}
-            onWorkUnit={openUnit}
-          />
+      <main
+        ref={main}
+        className={view === "session" ? "session-workspace" : ""}
+      >
+        {(view === "unit" || view === "session") && (
+          <nav className="context-toolbar" aria-label="Context navigation">
+            {selected && (
+              <button onClick={() => navigate({ view: "projects" })}>
+                Project overview
+              </button>
+            )}
+            {unit && view !== "unit" && (
+              <button onClick={() => openUnit(unit)}>
+                Return to last task
+              </button>
+            )}
+            {view === "unit" && (
+              <button onClick={() => navigate({ view: "units" })}>
+                All Work Units
+              </button>
+            )}
+            {view === "session" && (
+              <button onClick={() => navigate({ view: "sessions" })}>
+                All sessions
+              </button>
+            )}
+          </nav>
+        )}
+        {view === "sessions" || view === "session" ? (
+          <div className={view === "session" ? "session-split" : ""}>
+            <div className="session-list-pane">
+              <Sessions
+                onOpen={openSession}
+                compact={view === "session"}
+                selected={view === "session" ? session : undefined}
+              />
+            </div>
+            {view === "session" && (
+              <div className="session-detail-pane">
+                <SessionView
+                  key={`${session}-${focus}`}
+                  id={session}
+                  focus={focus}
+                  onWorkUnit={openUnit}
+                />
+              </div>
+            )}
+          </div>
         ) : view === "units" ? (
           <WorkUnits onOpen={openUnit} onNew={() => setNewWork(true)} />
         ) : view === "unit" ? (
@@ -270,13 +408,23 @@ export function App() {
           <Search onSession={openSession} onWorkUnit={openUnit} />
         ) : (
           <>
-            <div className="page-title">
-              <div className="eyebrow">DEVELOPMENT WORKSPACE</div>
+            <div className={`page-title ${selected ? "project-heading" : ""}`}>
+              {!selected && (
+                <div className="eyebrow">DEVELOPMENT WORKSPACE</div>
+              )}
               <h1>{detail.data?.project.name ?? "Projects"}</h1>
               <p className="muted">
                 {detail.data?.project.root_path ??
                   "Bring your repositories, worktrees, and AI-assisted work into one place."}
               </p>
+              {!selected && (
+                <button
+                  className="primary"
+                  onClick={() => setBrowseRepository(true)}
+                >
+                  Open folder…
+                </button>
+              )}
             </div>
             {(projects.error || detail.error) && (
               <p className="error" role="alert">
@@ -287,7 +435,11 @@ export function App() {
               <RegisteredProjects
                 projects={projects.data ?? []}
                 loading={projects.isLoading}
-                onOpen={(id) => { setSelected(id); setTree(null); add.reset(); }}
+                onOpen={(id) => {
+                  navigate({ view: "projects", project: id });
+                  setTree(null);
+                  add.reset();
+                }}
                 onRemoved={(id) => {
                   setTree(null);
                   client.removeQueries({ queryKey: ["project", id] });
@@ -364,16 +516,53 @@ export function App() {
                     + New Work Unit
                   </button>
                 </div>
-                <WorkspaceMap
-                  trees={detail.data.worktrees}
-                  base={detail.data.project.base_branch}
-                  onSelect={setTree}
-                />
+                <div className="project-summary">
+                  <section className="panel project-tasks">
+                    <div className="section-title">
+                      <h2>Project Work Units</h2>
+                      <span className="muted">
+                        {detail.data.work_units.length} tasks
+                      </span>
+                    </div>
+                    <div className="project-task-list">
+                      {detail.data.work_units.length ? (
+                        detail.data.work_units.map((u) => (
+                          <button
+                            className="list-row"
+                            key={u.id}
+                            onClick={() => openUnit(u.id)}
+                          >
+                            <strong>{u.title}</strong>
+                            <span className="badge">{u.status}</span>
+                          </button>
+                        ))
+                      ) : (
+                        <p className="muted">
+                          No tasks yet. Create a Work Unit to get started.
+                        </p>
+                      )}
+                    </div>
+                  </section>
+                  <WorkspaceMap
+                    trees={detail.data.worktrees}
+                    base={detail.data.project.base_branch}
+                    onSelect={(next) =>
+                      setTree(tree?.id === next.id ? null : next)
+                    }
+                  />
+                </div>
                 {tree && (
-                  <section className="panel">
-                    <h2>{tree.branch ?? "Detached worktree"}</h2>
-                    <code>{tree.path}</code>
-                    <p>
+                  <section className="panel worktree-detail">
+                    <div className="section-title">
+                      <h2>{tree.branch ?? "Detached worktree"}</h2>
+                      <button
+                        onClick={() => setTree(null)}
+                        aria-label="Close worktree details"
+                      >
+                        Close
+                      </button>
+                    </div>
+                    <div className="worktree-quick-actions">
                       <button
                         onClick={() =>
                           setTerminal({
@@ -385,74 +574,65 @@ export function App() {
                       >
                         Open worktree terminal
                       </button>
-                    </p>
-                    {tree.work_unit_id && (
-                      <p>
+                      {tree.work_unit_id && (
                         <button onClick={() => openUnit(tree.work_unit_id!)}>
                           Open Work Unit
                         </button>
-                      </p>
-                    )}
-                    <p>
-                      HEAD <code>{tree.head}</code>
-                    </p>
-                    <p>
-                      Base branch{" "}
-                      <code>
-                        {tree.base_branch ?? detail.data.project.base_branch}
-                      </code>
-                    </p>
-                    <p>
-                      Current base commit{" "}
-                      <code>{tree.base_commit ?? "Unknown"}</code>
-                    </p>
+                      )}
+                      <code>{tree.path}</code>
+                    </div>
                     {tree.warning && <p className="warning">{tree.warning}</p>}
-                    <h3>Changed files</h3>
-                    {tree.changed_files.length ? (
-                      tree.changed_files.map((f) => (
-                        <div key={f}>
-                          <code>{f}</code>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="muted">
-                        {tree.missing || tree.warning
-                          ? "File activity unavailable or incomplete; inspect the warning above."
-                          : "No changes relative to the base branch."}
+                    <details>
+                      <summary>
+                        Changed files ({tree.changed_files.length}) & Git
+                        details
+                      </summary>
+                      <p>
+                        HEAD <code>{tree.head}</code> · Base{" "}
+                        <code>
+                          {tree.base_branch ?? detail.data.project.base_branch}
+                        </code>{" "}
+                        <code>{tree.base_commit ?? "Unknown"}</code>
                       </p>
-                    )}
+                      {tree.agents.length > 0 && (
+                        <p>
+                          {tree.agents
+                            .map((a) => `${a.name} · ${a.status}`)
+                            .join(" / ")}
+                        </p>
+                      )}
+                      {tree.changed_files.length ? (
+                        tree.changed_files.map((f) => (
+                          <div key={f}>
+                            <code>{f}</code>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="muted">
+                          {tree.missing || tree.warning
+                            ? "File activity unavailable or incomplete; inspect the warning above."
+                            : "No changes relative to the base branch."}
+                        </p>
+                      )}
+                    </details>
                   </section>
                 )}
-                <section className="panel">
-                  <h2>Project Work Units</h2>
-                  {detail.data.work_units.length ? (
-                    detail.data.work_units.map((u) => (
-                      <button
-                        className="list-row"
-                        key={u.id}
-                        onClick={() => openUnit(u.id)}
-                      >
-                        <strong>{u.title}</strong>
-                        <span className="badge">{u.status}</span>
-                      </button>
-                    ))
-                  ) : (
-                    <p className="muted">
-                      No Work Units yet. Create one to connect this repository
-                      to an Agent Team.
-                    </p>
-                  )}
-                </section>
+                <CommitGraph key={selected} project={selected} />
               </>
             )}
           </>
         )}
       </main>
-      {terminal && (
-        <Suspense fallback={<p>Loading terminal…</p>}>
-          <Terminal target={terminal} onClose={() => setTerminal(null)} />
-        </Suspense>
-      )}
+      <TerminalDock
+        tabs={terminalTabs}
+        active={activeTerminal}
+        onActive={setActiveTerminal}
+        onClose={(id) => {
+          setTerminalTabs((tabs) => tabs.filter((t) => t.id !== id));
+          if (activeTerminal === id)
+            setActiveTerminal(terminalTabs.find((t) => t.id !== id)?.id ?? "");
+        }}
+      />
       {newWork && (
         <NewWorkUnit
           projects={projects.data ?? []}

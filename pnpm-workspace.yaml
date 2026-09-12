@@ -1,5 +1,7 @@
 packages:
   - apps/web
   - apps/desktop
+  - apps/worker
 onlyBuiltDependencies:
   - esbuild
+  - electron

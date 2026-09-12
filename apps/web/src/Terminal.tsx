@@ -42,6 +42,8 @@ export function Terminal({
     );
     socket.binaryType = "arraybuffer";
     const resize = () => {
+      if (!container.current?.clientWidth || !container.current.clientHeight)
+        return;
       fit.fit();
       if (socket.readyState === WebSocket.OPEN)
         socket.send(

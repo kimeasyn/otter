@@ -19,6 +19,53 @@ async fn repo(path: &Path) {
 }
 
 #[tokio::test]
+async fn commit_history_preserves_merge_parents_refs_and_working_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    repo(root).await;
+    git::run(root, &["checkout", "-b", "feat/graph"])
+        .await
+        .unwrap();
+    git::run(
+        root,
+        &["commit", "--allow-empty", "-m", "한글 그래프 | feature"],
+    )
+    .await
+    .unwrap();
+    git::run(root, &["checkout", "main"]).await.unwrap();
+    git::run(root, &["commit", "--allow-empty", "-m", "Main progress"])
+        .await
+        .unwrap();
+    git::run(
+        root,
+        &["merge", "--no-ff", "feat/graph", "-m", "Merge feature"],
+    )
+    .await
+    .unwrap();
+    std::fs::write(root.join("shared.txt"), "unsaved work\n").unwrap();
+    let index = std::fs::read(root.join(".git/index")).unwrap();
+    let before = git::run(root, &["status", "--porcelain"]).await.unwrap();
+    let commits = git::commits(root, 50).await.unwrap();
+    assert_eq!(commits.len(), 4);
+    assert_eq!(commits[0].parents.len(), 2);
+    assert!(commits[0].refs.contains("HEAD -> main"));
+    assert!(commits
+        .iter()
+        .any(|c| c.subject == "한글 그래프 | feature" && c.refs.contains("feat/graph")));
+    assert!(commits.last().unwrap().parents.is_empty());
+    assert_eq!(git::commits(root, 2).await.unwrap().len(), 2);
+    assert_eq!(std::fs::read(root.join(".git/index")).unwrap(), index);
+    assert_eq!(
+        git::run(root, &["status", "--porcelain"]).await.unwrap(),
+        before
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("shared.txt")).unwrap(),
+        "unsaved work\n"
+    );
+}
+
+#[tokio::test]
 async fn discovers_real_divergence_dirty_files_and_worktrees() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("repo");

@@ -26,7 +26,9 @@ for (let attempt = 0; attempt < 100; attempt++) {
     );
     if (connection.pid === child.pid) {
       console.log(
-        `\nOtter is ready. Open this private URL in your browser:\n${connection.url}/#token=${connection.token}\n`,
+        connection.dev_no_auth
+          ? `\nOtter development mode (no token): ${connection.url}/\n`
+          : `\nOtter is ready. Open this private URL in your browser:\n${connection.url}/#token=${connection.token}\n`,
       );
       console.log(
         "For home-server access, forward the port over SSH first (see README).",

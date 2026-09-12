@@ -108,8 +108,17 @@ export function Providers() {
     </div>
   );
 }
-export function Sessions({ onOpen }: { onOpen: (id: string) => void }) {
+export function Sessions({
+  onOpen,
+  compact = false,
+  selected,
+}: {
+  onOpen: (id: string) => void;
+  compact?: boolean;
+  selected?: string;
+}) {
   const [offset, setOffset] = useState(0);
+  const [filter, setFilter] = useState("");
   const client = useQueryClient();
   const sessions = useQuery({
     queryKey: ["sessions", offset],
@@ -136,14 +145,21 @@ export function Sessions({ onOpen }: { onOpen: (id: string) => void }) {
   });
   return (
     <>
-      <div className="page-title">
-        <div className="eyebrow">PERSISTENT DEVELOPMENT HISTORY</div>
-        <h1>Sessions</h1>
-        <p className="muted">
-          Conversation and execution history, organized across providers.
-        </p>
-      </div>
-      <Providers />
+      {!compact && (
+        <div className="page-title">
+          <div className="eyebrow">PERSISTENT DEVELOPMENT HISTORY</div>
+          <h1>Sessions</h1>
+          <p className="muted">
+            Conversation and execution history, organized across providers.
+          </p>
+        </div>
+      )}
+      {!compact && (
+        <details className="provider-disclosure">
+          <summary>Providers & connection status</summary>
+          <Providers />
+        </details>
+      )}
       <section className="panel">
         <div className="section-title">
           <h2>Session history</h2>
@@ -151,6 +167,15 @@ export function Sessions({ onOpen }: { onOpen: (id: string) => void }) {
             {scan.isPending ? "Importing…" : "Scan provider history"}
           </button>
         </div>
+        <label className="session-filter">
+          Filter sessions on this page
+          <input
+            type="search"
+            placeholder="Title, folder or provider…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+        </label>
         {scan.data && (
           <p className="muted">
             Imported {scan.data.reduce((sum, r) => sum + (r.inserted ?? 0), 0)}{" "}
@@ -178,24 +203,47 @@ export function Sessions({ onOpen }: { onOpen: (id: string) => void }) {
             </p>
           </div>
         )}
-        {sessions.data?.items.map((s) => (
-          <button
-            className="list-row session-row"
-            key={s.id}
-            onClick={() => onOpen(s.id)}
-          >
-            <span className="session-subject">
-              <strong title={s.title}>{s.title}</strong>
-              <small>{s.cwd ?? "Unassociated session"}</small>
-            </span>
-            <span className="badge">
-              {s.provider === "fake" ? "FakeProvider · Synthetic" : s.provider}
-            </span>
-            <span className="muted">
-              {s.event_count} events · {s.status}
-            </span>
-          </button>
-        ))}
+        {sessions.data?.items
+          .filter((s) =>
+            `${s.title} ${s.cwd ?? ""} ${s.provider}`
+              .toLowerCase()
+              .includes(filter.toLowerCase()),
+          )
+          .map((s) => (
+            <button
+              className={`list-row session-row ${selected === s.id ? "current" : ""}`}
+              aria-current={selected === s.id ? "true" : undefined}
+              key={s.id}
+              onClick={() => onOpen(s.id)}
+            >
+              <span className="session-subject">
+                <strong title={s.title}>{s.title}</strong>
+                <small>{s.cwd ?? "Unassociated session"}</small>
+              </span>
+              <span className="badge">
+                {s.provider === "fake"
+                  ? "FakeProvider · Synthetic"
+                  : s.provider}
+              </span>
+              <span className="muted">
+                {s.event_count} events · {s.status}
+                <time className="session-date" dateTime={s.last_seen_at}>
+                  {new Date(s.last_seen_at).toLocaleDateString()}
+                </time>
+              </span>
+            </button>
+          ))}
+        {!!sessions.data?.items.length &&
+          !sessions.data.items.some((s) =>
+            `${s.title} ${s.cwd ?? ""} ${s.provider}`
+              .toLowerCase()
+              .includes(filter.toLowerCase()),
+          ) && (
+            <p className="empty">
+              No matches on this page. Clear the filter or use Search for all
+              history.
+            </p>
+          )}
         {sessions.data && (
           <Pager
             offset={offset}
@@ -249,7 +297,7 @@ export function SessionView({
   onWorkUnit?: (id: string) => void;
 }) {
   const [tab, setTab] = useState<(typeof tabs)[number]>(
-    focus ? "Timeline" : "Overview",
+    focus ? "Timeline" : "Conversation",
   );
   const [offset, setOffset] = useState(0);
   const metadata = useQuery({

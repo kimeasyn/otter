@@ -1,11 +1,14 @@
 {
   "name": "@otter/desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "type": "module",
+  "main": "src/main.mjs",
   "scripts": {
-    "tauri": "tauri"
+    "start": "electron .",
+    "test": "node --test test/*.test.mjs"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.10.0"
+    "electron": "44.3.0"
   }
 }

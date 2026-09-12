@@ -1,14 +1,20 @@
 {
   "name": "otter",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "packageManager": "pnpm@10.30.3",
   "scripts": {
+    "start": "node apps/worker/src/server.mjs",
+    "desktop": "pnpm --filter @otter/desktop start",
+    "desktop:package": "pnpm build && node scripts/package-desktop.mjs",
+    "desktop:runtime": "node scripts/smoke-desktop-runtime.mjs",
+    "desktop:smoke": "pnpm build && node scripts/smoke-desktop-gui.mjs",
     "build": "pnpm --filter @otter/web build",
     "check": "pnpm --filter @otter/web check",
-    "test": "pnpm --filter @otter/web test"
+    "test": "pnpm --filter @otter/worker test && pnpm --filter @otter/web test && pnpm --filter @otter/desktop test"
   },
   "devDependencies": {
+    "electron-builder": "26.15.3",
     "prettier": "^3.9.6"
   }
 }

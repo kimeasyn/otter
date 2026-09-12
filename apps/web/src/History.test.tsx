@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { SessionView } from "./History";
@@ -10,7 +16,11 @@ afterEach(cleanup);
 function renderSession(userText = "Please fix the parser") {
   const items = [
     { id: 1, kind: "user.message", text: userText },
-    { id: 2, kind: "assistant.reasoning_summary", text: "Inspect the boundary." },
+    {
+      id: 2,
+      kind: "assistant.reasoning_summary",
+      text: "Inspect the boundary.",
+    },
     { id: 3, kind: "assistant.message", text: "The parser is fixed." },
   ].map((event) => ({
     ...event,
@@ -25,7 +35,9 @@ function renderSession(userText = "Please fix the parser") {
   );
   return render(
     <QueryClientProvider
-      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
     >
       <SessionView id="test-session" />
     </QueryClientProvider>,
@@ -34,14 +46,26 @@ function renderSession(userText = "Please fix the parser") {
 
 test("Conversation distinguishes user, assistant and reasoning bubbles in source order", async () => {
   renderSession();
+  expect(screen.getByRole("tab", { name: "Conversation" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   fireEvent.click(screen.getByRole("tab", { name: "Conversation" }));
   const messages = await screen.findAllByRole("article");
   expect(messages).toHaveLength(3);
   expect(messages[0]).toHaveClass("conversation-message", "conversation-user");
   expect(within(messages[0]).getByText("User")).toBeVisible();
-  expect(messages[1]).toHaveClass("conversation-assistant", "conversation-reasoning");
-  expect(within(messages[1]).getByText("Assistant · Reasoning Summary")).toBeVisible();
-  expect(messages[2]).toHaveClass("conversation-message", "conversation-assistant");
+  expect(messages[1]).toHaveClass(
+    "conversation-assistant",
+    "conversation-reasoning",
+  );
+  expect(
+    within(messages[1]).getByText("Assistant · Reasoning Summary"),
+  ).toBeVisible();
+  expect(messages[2]).toHaveClass(
+    "conversation-message",
+    "conversation-assistant",
+  );
   expect(within(messages[2]).getByText("Assistant")).toBeVisible();
 });
 
@@ -63,7 +87,9 @@ test("long conversation messages retain their expandable full text", async () =>
   renderSession(fullText);
   fireEvent.click(screen.getByRole("tab", { name: "Conversation" }));
   const message = (await screen.findAllByRole("article"))[0];
-  expect(message.querySelector(".event-text")?.textContent).toBe(fullText.slice(0, 1600) + "…");
+  expect(message.querySelector(".event-text")?.textContent).toBe(
+    fullText.slice(0, 1600) + "…",
+  );
   fireEvent.click(within(message).getByText("Technical details / full output"));
   expect(message.querySelector("details")).toHaveAttribute("open");
   expect(message.querySelector("details pre")?.textContent).toBe(fullText);

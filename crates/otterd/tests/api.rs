@@ -69,6 +69,18 @@ async fn project_registration_is_idempotent_and_removal_preserves_files_and_hist
     assert_eq!(status, StatusCode::OK);
     let pid = project["id"].as_str().unwrap();
     let route = format!("/api/projects/{pid}");
+    let commits_route = format!("{route}/commits?limit=1");
+    assert_eq!(
+        project_request(&app, "GET", &commits_route, Value::Null, false)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, history) = project_request(&app, "GET", &commits_route, Value::Null, true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(history["items"][0]["subject"], "initial");
+    assert_eq!(history["items"].as_array().unwrap().len(), 1);
+    assert_eq!(history["has_more"], false);
     let (first, second) = tokio::join!(
         project_request(&app, "POST", "/api/projects", json!({"path":repo}), true),
         project_request(
@@ -389,6 +401,57 @@ async fn local_api_requires_token_and_rejects_cross_origin() {
             .await
             .unwrap();
         assert_eq!(res.status(), expected);
+    }
+}
+
+#[tokio::test]
+async fn development_no_auth_keeps_host_origin_and_fetch_metadata_checks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(&tmp.path().join("test.db")).await.unwrap();
+    let mut state = AppState::new(db, "token".into());
+    state.dev_no_auth = true;
+    let app = router(state, tmp.path().into());
+    for (host, origin, site, expected) in [
+        ("127.0.0.1:4317", None, None, StatusCode::OK),
+        (
+            "localhost:4317",
+            Some("http://localhost:4317"),
+            Some("same-origin"),
+            StatusCode::OK,
+        ),
+        ("evil.example:4317", None, None, StatusCode::FORBIDDEN),
+        (
+            "localhost:4317",
+            Some("http://localhost:9999"),
+            None,
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "localhost:4317",
+            None,
+            Some("cross-site"),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "localhost:4317",
+            None,
+            Some("same-site"),
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let mut request = Request::builder().uri("/api/projects").header("host", host);
+        if let Some(origin) = origin {
+            request = request.header("origin", origin);
+        }
+        if let Some(site) = site {
+            request = request.header("sec-fetch-site", site);
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
     }
 }
 

@@ -57,6 +57,7 @@ async fn main() -> Result<()> {
     otter_core::work::seed_profiles(&db).await?;
     tracing::info!("Otter database migrations and runtime reconciliation completed");
     let token = format!("{}{}", otter_core::id(), otter_core::id());
+    let dev_no_auth = std::env::var("OTTER_DEV_NO_AUTH").as_deref() == Ok("1");
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
@@ -65,8 +66,12 @@ async fn main() -> Result<()> {
         options.mode(0o600);
     }
     let mut connection = options.open(data.join("connection.json"))?;
-    connection.write_all(serde_json::to_string(&serde_json::json!({"url":format!("http://{address}"),"token":token,"pid":std::process::id()}))?.as_bytes())?;
-    let state = AppState::new(db, token);
+    connection.write_all(serde_json::to_string(&serde_json::json!({"url":format!("http://{address}"),"token":token,"pid":std::process::id(),"dev_no_auth":dev_no_auth}))?.as_bytes())?;
+    let mut state = AppState::new(db, token);
+    state.dev_no_auth = dev_no_auth;
+    if state.dev_no_auth {
+        tracing::warn!("Development mode: token authentication disabled. Local processes can access Otter; do not expose this port or use on shared machines.");
+    }
     let background = state.clone();
     if std::env::var("OTTER_AUTO_IMPORT").as_deref() != Ok("0") {
         tokio::spawn(async move {

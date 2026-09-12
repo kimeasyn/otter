@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, Request, State},
+    extract::{Path, Query, Request, State},
     http::{header, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -20,6 +20,7 @@ pub mod units;
 pub struct AppState {
     pub db: Db,
     pub token: Arc<String>,
+    pub dev_no_auth: bool,
     pub ingest_lock: Arc<tokio::sync::Mutex<()>>,
     pub executor: otter_core::execution::Executor,
     pub terminal_shutdown: tokio::sync::watch::Sender<bool>,
@@ -32,6 +33,7 @@ impl AppState {
             terminal_shutdown: tokio::sync::watch::channel(false).0,
             db,
             token: Arc::new(token),
+            dev_no_auth: false,
             ingest_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
@@ -73,6 +75,17 @@ async fn auth(State(s): State<AppState>, req: Request, next: Next) -> Response {
             return (StatusCode::FORBIDDEN, "Cross-origin API access is disabled").into_response();
         }
     }
+    if s.dev_no_auth {
+        if let Some(site) = req.headers().get("sec-fetch-site") {
+            if !matches!(site.to_str(), Ok("same-origin" | "none")) {
+                return (
+                    StatusCode::FORBIDDEN,
+                    "Cross-site development API access is disabled",
+                )
+                    .into_response();
+            }
+        }
+    }
     let supplied = req
         .headers()
         .get(header::AUTHORIZATION)
@@ -93,7 +106,7 @@ async fn auth(State(s): State<AppState>, req: Request, next: Next) -> Response {
             }
         })
         .unwrap_or("");
-    if !bool::from(supplied.as_bytes().ct_eq(s.token.as_bytes())) {
+    if !s.dev_no_auth && !bool::from(supplied.as_bytes().ct_eq(s.token.as_bytes())) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"Otter authentication required"})),
@@ -111,11 +124,12 @@ pub fn router(state: AppState, web: PathBuf) -> Router {
     let api = Router::new()
         .route(
             "/health",
-            get(|| async { Json(json!({"name":"Otter","version":env!("CARGO_PKG_VERSION")})) }),
+            get(|State(s): State<AppState>| async move { Json(json!({"name":"Otter","version":env!("CARGO_PKG_VERSION"),"dev_no_auth":s.dev_no_auth})) }),
         )
         .route("/projects", get(projects).post(add_project))
         .route("/directories", get(directories::browse))
         .route("/projects/{id}", get(project_detail).delete(remove_project))
+        .route("/projects/{id}/commits", get(project_commits))
         .route("/terminals/ws", get(terminal::upgrade))
         .route("/providers", get(history::providers_list))
         .route("/profiles", get(units::profiles).post(units::add_profile))
@@ -178,6 +192,30 @@ async fn projects(State(s): State<AppState>) -> ApiResult {
         )
         .await?
     )))
+}
+
+#[derive(Deserialize)]
+struct CommitQuery {
+    limit: Option<usize>,
+}
+
+async fn project_commits(
+    State(s): State<AppState>,
+    Path(pid): Path<String>,
+    Query(query): Query<CommitQuery>,
+) -> ApiResult {
+    let project =
+        s.db.one(
+            "SELECT root_path FROM projects WHERE id=? AND removed_at IS NULL",
+            vec![pid.into()],
+        )
+        .await?;
+    let root = PathBuf::from(project["root_path"].as_str().unwrap_or_default());
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    let mut commits = git::commits(&root, limit + 1).await?;
+    let has_more = commits.len() > limit;
+    commits.truncate(limit);
+    Ok(Json(json!({"items":commits,"has_more":has_more})))
 }
 
 #[derive(Deserialize)]

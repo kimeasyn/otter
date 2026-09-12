@@ -47,6 +47,60 @@ pub async fn branches(path: &Path) -> Result<Vec<String>> {
     .collect())
 }
 
+#[derive(Debug, Serialize)]
+pub struct Commit {
+    pub hash: String,
+    pub parents: Vec<String>,
+    pub refs: String,
+    pub author: String,
+    pub date: String,
+    pub subject: String,
+}
+
+/// Read local refs only. No fetch, checkout, index update or shell interpolation.
+pub async fn commits(path: &Path, limit: usize) -> Result<Vec<Commit>> {
+    let count = format!("--max-count={}", limit.clamp(1, 201));
+    let raw = run(
+        path,
+        &[
+            "log",
+            "--all",
+            "HEAD",
+            "--topo-order",
+            "--no-color",
+            "--no-show-signature",
+            "--no-notes",
+            "--decorate=short",
+            &count,
+            "--format=%H%x00%P%x00%D%x00%an%x00%aI%x00%s%x00",
+            "--",
+        ],
+    )
+    .await?;
+    let mut fields = raw.split('\0');
+    let mut commits = Vec::new();
+    while let Some(hash) = fields.next() {
+        let hash = hash.trim();
+        if hash.is_empty() {
+            continue;
+        }
+        let parents = fields.next().context("Missing commit parents")?;
+        let refs = fields.next().context("Missing commit refs")?;
+        let author = fields.next().context("Missing commit author")?;
+        let date = fields.next().context("Missing commit date")?;
+        let subject = fields.next().context("Missing commit subject")?;
+        commits.push(Commit {
+            hash: hash.into(),
+            parents: parents.split_whitespace().map(str::to_owned).collect(),
+            refs: refs.into(),
+            author: author.into(),
+            date: date.into(),
+            subject: subject.into(),
+        });
+    }
+    Ok(commits)
+}
+
 pub async fn default_branch(path: &Path) -> Result<String> {
     let branches = branches(path).await?;
     for candidate in ["main", "master"] {
