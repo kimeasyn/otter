@@ -282,6 +282,8 @@ export async function startServer({
           if (receipt) return send(200, store.requestResult(receipt[1]));
           if (path === "/api/codex-settings")
             return send(200, codexSettings(store));
+          if (path === "/api/codex-models")
+            return send(200, await readiness.models());
           if (path === "/api/state")
             return send(
               200,
@@ -461,6 +463,7 @@ export async function startServer({
                 () =>
                   runner.active.size > 0 ||
                   !!readiness.pending ||
+                  !!readiness.modelsPending ||
                   !!readiness.client,
               ),
             );
@@ -667,6 +670,8 @@ export async function startServer({
               return send(200, company.editDocument(id, input));
             if (table === "tasks" && verb === "steer")
               return send(200, await runner.steer(id, input));
+            if (table === "tasks" && verb === "edit")
+              return send(200, company.editTask(id, input));
             if (table === "tasks" && verb === "cancel") {
               await runner.cancel(id);
               return send(200, {});

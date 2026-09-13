@@ -195,7 +195,7 @@ try {
     .getByRole("combobox", { name: "프로젝트 선택" })
     .selectOption(project.id);
   await page.getByRole("button", { name: "▦ 사무실" }).click();
-  await floor.getByText(/확인할 업무 3개/).click();
+  await floor.getByText(/질문·승인·검토 대기 3개/).click();
   await floor
     .locator(".office-attention")
     .getByRole("button", { name: /김코딩.*카카오 로그인/ })

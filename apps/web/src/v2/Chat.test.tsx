@@ -42,6 +42,38 @@ const team: Assignment[] = ["김설계", "김코딩"].map((name, index) => ({
     appearance: { color: "#6675cf", avatar: "default" },
   },
 }));
+it("reports conversation selection for restoration and supports the shared expanded view control", () => {
+  const onSelectionChange = vi.fn();
+  const onExpandedChange = vi.fn();
+  render(
+    <Chat
+      member={team[0]}
+      data={snapshot()}
+      action={vi.fn()}
+      projectId="p"
+      busy={false}
+      initialTaskId="private"
+      onReports={vi.fn()}
+      onTask={vi.fn()}
+      expanded
+      onExpandedChange={onExpandedChange}
+      onSelectionChange={onSelectionChange}
+    />,
+  );
+  expect(onSelectionChange).toHaveBeenLastCalledWith({
+    taskId: "private",
+    channel: "direct",
+  });
+  fireEvent.change(screen.getByRole("combobox", { name: "업무 대화 선택" }), {
+    target: { value: "" },
+  });
+  expect(onSelectionChange).toHaveBeenLastCalledWith({
+    taskId: "",
+    channel: "direct",
+  });
+  fireEvent.click(screen.getByRole("button", { name: "사무실 함께 보기" }));
+  expect(onExpandedChange).toHaveBeenCalledWith(false);
+});
 function snapshot(): Snapshot {
   return {
     companies: [],
@@ -97,6 +129,40 @@ function snapshot(): Snapshot {
     ],
   };
 }
+it("새 업무 진입과 넓은 대화 보기는 실행 없이 전환하며 기존 업무 초안은 보존한다", () => {
+  const action = vi.fn();
+  render(
+    <Chat
+      member={team[1]}
+      data={snapshot()}
+      action={action}
+      projectId="p"
+      busy={false}
+      initialTaskId="private"
+      onReports={vi.fn()}
+      onTask={vi.fn()}
+    />,
+  );
+  const input = screen.getByRole("textbox", { name: "직원에게 업무 요청" });
+  fireEvent.change(input, { target: { value: "이전 업무 초안" } });
+  fireEvent.click(screen.getByRole("button", { name: "＋ 새 업무 요청" }));
+  expect(screen.getByLabelText("업무 대화 선택")).toHaveValue("");
+  expect(input).toHaveValue("");
+  fireEvent.change(screen.getByLabelText("업무 대화 선택"), {
+    target: { value: "private" },
+  });
+  expect(input).toHaveValue("이전 업무 초안");
+  fireEvent.click(screen.getByRole("button", { name: "대화 크게 보기" }));
+  expect(screen.getByRole("complementary", { name: "팀 대화" })).toHaveClass(
+    "expanded",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "사무실 함께 보기" }));
+  expect(
+    screen.getByRole("complementary", { name: "팀 대화" }),
+  ).not.toHaveClass("expanded");
+  expect(action).not.toHaveBeenCalled();
+});
+
 it("Enter는 기존 전송 흐름을 사용하고 줄바꿈·한글 조합·반복 키·전송 불가 상태는 보내지 않는다", async () => {
   const data = snapshot();
   const action = vi.fn().mockResolvedValue({ id: "private" });

@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Avatar } from "./Office";
+import { AvatarPicker } from "./AvatarPicker";
+import { ModelPicker } from "./ModelPicker";
 import type { Assignment, Employee, Snapshot } from "./types";
 
 const fields = [
@@ -10,34 +12,90 @@ const fields = [
   ["skills", "스킬·전문 지식"],
 ] as const;
 type Action = (path: string, data: unknown) => Promise<unknown>;
+type Editor = {
+  kind:
+    | "assignment"
+    | "employee"
+    | "derive"
+    | "assignment-update"
+    | "employee-update";
+  id: string;
+  assignment?: Assignment;
+  employee: Employee;
+  source?: Employee;
+  sequence: number;
+  values?: Record<string, string>;
+  selectedFields?: string[];
+};
+// 문서·지침은 브라우저 저장소에 쓰지 않는다. 닫기/메뉴 이동 동안만 메모리에 보존한다.
+const drafts = new Map<string, Editor>();
 export function Staff({
   data,
   action,
   onChat,
   onAdd,
+  environment,
+  environmentLabel,
+  projectId = "",
+  editorRequest,
 }: {
   data: Snapshot;
   action: Action;
   onChat: (id: string) => void;
   onAdd: () => void;
+  environment?: string;
+  environmentLabel?: string;
+  projectId?: string;
+  editorRequest?: { assignmentId: string; sequence: number } | null;
 }) {
   const [tab, setTab] = useState<"team" | "library">("team");
-  const [editor, setEditor] = useState<{
-    kind:
-      | "assignment"
-      | "employee"
-      | "derive"
-      | "assignment-update"
-      | "employee-update";
-    id: string;
-    assignment?: Assignment;
-    employee: Employee;
-    source?: Employee;
-    sequence: number;
-  } | null>(null);
+  const [editor, setEditor] = useState<Editor | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const open = (kind: NonNullable<typeof editor>["kind"], id: string) => {
+  const formRef = useRef<HTMLFormElement>(null);
+  const currentEditor = useRef(editor);
+  currentEditor.current = editor;
+  const sequence = useRef(0);
+  const scope = JSON.stringify([environment || "local", projectId]);
+  const draftKey = (item: Pick<Editor, "kind" | "id">) =>
+    `${scope}:${item.kind}:${item.id}`;
+  const preserveDraft = () => {
+    const item = currentEditor.current;
+    if (!item || !formRef.current) return;
+    const form = new FormData(formRef.current);
+    const values = {
+      ...drafts.get(draftKey(item))?.values,
+      ...Object.fromEntries(
+        [...form].filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      ),
+    };
+    if (formRef.current.querySelector('[name="model"][aria-busy="true"]'))
+      values.model =
+        item.values?.model ??
+        item.assignment?.settings.model ??
+        item.employee.model;
+    drafts.set(draftKey(item), {
+      ...item,
+      values,
+      selectedFields: form.getAll("fields").map(String),
+    });
+  };
+  useLayoutEffect(() => () => preserveDraft(), [scope]);
+  const close = () => {
+    preserveDraft();
+    setEditor(null);
+  };
+  const open = (kind: Editor["kind"], id: string, fresh = false) => {
+    const key = draftKey({ kind, id });
+    if (fresh) drafts.delete(key);
+    const draft = drafts.get(key);
+    if (draft) {
+      setError("");
+      setEditor({ ...draft, sequence: ++sequence.current });
+      return;
+    }
     const assignment = kind.startsWith("assignment")
       ? data.assignments?.find((a) => a.id === id)
       : undefined;
@@ -50,15 +108,27 @@ export function Staff({
       : data.employees.find((e) => e.id === employee.sourceId);
     setError("");
     // 입력과 비교 내용의 기준 버전은 창을 열 때 고정한다. 조회 갱신으로 저장 기준을 올리지 않는다.
-    setEditor((current) => ({
+    setEditor({
       kind,
       id,
       assignment,
       employee,
       source,
-      sequence: (current?.sequence || 0) + 1,
-    }));
+      sequence: ++sequence.current,
+    });
   };
+  const handledRequest = useRef<typeof editorRequest>(null);
+  useEffect(() => {
+    if (
+      !editorRequest ||
+      handledRequest.current === editorRequest ||
+      !data.assignments?.some((item) => item.id === editorRequest.assignmentId)
+    )
+      return;
+    preserveDraft();
+    open("assignment", editorRequest.assignmentId);
+    handledRequest.current = editorRequest;
+  }, [editorRequest, data.assignments]);
   const { assignment, employee, source } = editor || {};
   const target = assignment?.settings || employee;
   const updating = editor?.kind.endsWith("update");
@@ -106,7 +176,7 @@ export function Staff({
                 : 0;
               return (
                 <article key={a.id} className="staff-card">
-                  <Avatar color={a.appearance.color} />
+                  <Avatar {...a.appearance} />
                   <div>
                     <h2>{a.settings.name}</h2>
                     <p>
@@ -133,7 +203,7 @@ export function Staff({
             })
           : data.employees.map((e) => (
               <article key={e.id} className="staff-card">
-                <Avatar color={e.appearance.color} />
+                <Avatar {...e.appearance} />
                 <div>
                   <h2>{e.name}</h2>
                   <p>
@@ -171,17 +241,17 @@ export function Staff({
       )}
       {editor && target && (
         <dialog
-          className="modal-backdrop"
+          className="modal-backdrop staff-editor-dialog"
           aria-labelledby="staff-editor-title"
           ref={(el) => {
             if (el && !el.open) el.showModal();
           }}
           onCancel={(e) => {
             if (saving) e.preventDefault();
-            else setEditor(null);
+            else close();
           }}
           onClick={(e) => {
-            if (!saving && e.target === e.currentTarget) setEditor(null);
+            if (!saving && e.target === e.currentTarget) close();
           }}
         >
           <section className="modal">
@@ -189,16 +259,18 @@ export function Staff({
               className="modal-close"
               aria-label="닫기"
               disabled={saving}
-              onClick={() => setEditor(null)}
+              onClick={close}
             >
               ×
             </button>
             <form
+              ref={formRef}
               key={editor.kind + editor.id + editor.sequence}
               onSubmit={(e) => {
                 e.preventDefault();
                 if (saving) return;
                 const form = new FormData(e.currentTarget);
+                preserveDraft();
                 setSaving(true);
                 setError("");
                 let path;
@@ -225,7 +297,10 @@ export function Staff({
                   };
                 }
                 void action(path, input)
-                  .then(() => setEditor(null))
+                  .then(() => {
+                    drafts.delete(draftKey(editor));
+                    setEditor(null);
+                  })
                   .catch((e) => setError(e.message))
                   .finally(() => setSaving(false));
               }}
@@ -249,14 +324,31 @@ export function Staff({
                       ? "이 프로젝트의 배정만 바꿉니다. 원본과 다른 프로젝트에는 영향을 주지 않습니다."
                       : "원본을 편집해도 이미 배정된 직원은 자동으로 바뀌지 않습니다."}
               </p>
+              {editor.values && (
+                <p className="form-note">
+                  닫기 전 작성하던 내용을 복원했습니다. 새로고침하면 임시 입력은
+                  사라집니다.
+                </p>
+              )}
               {(targetChanged || sourceChanged) && (
                 <p role="alert" className="form-error">
                   창을 연 뒤 설정이 변경되었습니다. 입력과 비교 내용은 그대로
                   보존했습니다.
                   {updating
                     ? " 최신 설정을 다시 비교하고 반영할 항목을 선택해 주세요."
-                    : " 저장하면 충돌로 거절됩니다. 작성한 내용을 복사한 뒤 닫고 다시 열어 최신 설정을 확인해 주세요."}
+                    : " 저장하면 충돌로 거절됩니다. 필요한 내용을 복사한 뒤 ‘임시 입력 버리고 최신 설정 열기’를 선택해 주세요."}
                 </p>
+              )}
+              {!updating && (
+                <AvatarPicker
+                  {...(assignment?.appearance || employee?.appearance)}
+                  avatar={
+                    editor.values?.avatar ||
+                    assignment?.appearance?.avatar ||
+                    employee?.appearance?.avatar
+                  }
+                  disabled={saving}
+                />
               )}
               {updating ? (
                 <div className="setting-comparison">
@@ -267,14 +359,19 @@ export function Staff({
                   <button
                     type="button"
                     disabled={saving}
-                    onClick={() => open(editor.kind, editor.id)}
+                    onClick={() => open(editor.kind, editor.id, true)}
                   >
                     최신 설정 다시 비교
                   </button>
                   {different.map(([key, label]) => (
                     <label key={key}>
                       <span>
-                        <input type="checkbox" name="fields" value={key} />
+                        <input
+                          type="checkbox"
+                          name="fields"
+                          value={key}
+                          defaultChecked={editor.selectedFields?.includes(key)}
+                        />
                         {label} 반영
                       </span>
                       <div>
@@ -288,31 +385,39 @@ export function Staff({
                   {!different.length && <p>다른 설정이 없습니다.</p>}
                 </div>
               ) : (
-                fields.map(([key, label]) => (
-                  <label key={key}>
-                    {label}
-                    {key === "instructions" || key === "skills" ? (
-                      <textarea
-                        name={key}
-                        required={key === "instructions"}
-                        defaultValue={target[key]}
-                      />
-                    ) : (
-                      <input
-                        name={key}
-                        required={key !== "model"}
-                        defaultValue={
-                          key === "name" && editor.kind === "derive"
-                            ? target.name + " (파생)"
-                            : target[key]
-                        }
-                        placeholder={
-                          key === "model" ? "비워두면 Codex 기본 모델" : ""
-                        }
-                      />
-                    )}
-                  </label>
-                ))
+                fields.map(([key, label]) =>
+                  key === "model" ? (
+                    <ModelPicker
+                      key={key}
+                      defaultValue={editor.values?.model ?? target.model}
+                      environment={environment}
+                      environmentLabel={environmentLabel}
+                      disabled={saving}
+                    />
+                  ) : (
+                    <label key={key}>
+                      {label}
+                      {key === "instructions" || key === "skills" ? (
+                        <textarea
+                          name={key}
+                          required={key === "instructions"}
+                          defaultValue={editor.values?.[key] ?? target[key]}
+                        />
+                      ) : (
+                        <input
+                          name={key}
+                          required
+                          defaultValue={
+                            editor.values?.[key] ??
+                            (key === "name" && editor.kind === "derive"
+                              ? target.name + " (파생)"
+                              : target[key])
+                          }
+                        />
+                      )}
+                    </label>
+                  ),
+                )
               )}
               <p className="form-note">
                 진행 중인 실행에는 시작 시점의 지침을 유지합니다. 변경은 다음
@@ -323,22 +428,33 @@ export function Staff({
                   {error}
                 </p>
               )}
-              <button
-                className="primary wide"
-                disabled={
-                  saving ||
-                  (updating &&
-                    (!different.length || !!targetChanged || !!sourceChanged))
-                }
-              >
-                {saving
-                  ? "저장 중…"
-                  : updating
-                    ? "선택한 변경 반영"
-                    : editor.kind === "derive"
-                      ? "파생 직원 만들기"
-                      : "설정 저장"}
-              </button>
+              <div className="staff-editor-footer">
+                {(editor.values || targetChanged || sourceChanged) && (
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => open(editor.kind, editor.id, true)}
+                  >
+                    임시 입력 버리고 최신 설정 열기
+                  </button>
+                )}
+                <button
+                  className="primary wide"
+                  disabled={
+                    saving ||
+                    (updating &&
+                      (!different.length || !!targetChanged || !!sourceChanged))
+                  }
+                >
+                  {saving
+                    ? "저장 중…"
+                    : updating
+                      ? "선택한 변경 반영"
+                      : editor.kind === "derive"
+                        ? "파생 직원 만들기"
+                        : "설정 저장"}
+                </button>
+              </div>
             </form>
           </section>
         </dialog>

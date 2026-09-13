@@ -5,6 +5,63 @@ import type { Approval } from "./types";
 
 afterEach(cleanup);
 
+it("요청 목적은 제공된 이유만 보여주고 연결 업무를 구분하며 누락된 설명은 추측하지 않는다", () => {
+  const action = vi.fn();
+  const { rerender } = render(
+    <Approvals
+      items={[approval]}
+      action={action}
+      tasks={[
+        {
+          id: "task",
+          title: "로그인 구현",
+          assignmentId: "worker",
+          status: "waiting",
+        },
+      ]}
+    />,
+  );
+  expect(screen.getByText("대상 업무: 로그인 구현")).toBeVisible();
+  expect(screen.getByText(approval.params.reason!)).toBeVisible();
+  rerender(
+    <Approvals
+      items={[{ ...approval, params: { command: "git status", reason: " " } }]}
+      action={action}
+    />,
+  );
+  expect(screen.getByText(/목적 설명이 제공되지 않았습니다/)).toBeVisible();
+  expect(screen.getByText("git status")).toBeVisible();
+  expect(action).not.toHaveBeenCalled();
+});
+
+it("파일 변경은 목록부터 보여주며 펼쳐도 승인하지 않고 전체 내용을 보존한다", () => {
+  const action = vi.fn();
+  const diff = "변경 내용\n".repeat(500);
+  render(
+    <Approvals
+      items={[
+        {
+          id: "files",
+          taskId: "task",
+          status: "pending",
+          method: "item/fileChange/requestApproval",
+          params: {
+            changes: [{ path: "/work/index.html", diff, kind: "add" }],
+          },
+        },
+      ]}
+      action={action}
+    />,
+  );
+  expect(screen.getByText(/파일 변경 1개/)).toBeVisible();
+  const details = screen.getByText("/work/index.html").closest("details")!;
+  expect(details).not.toHaveAttribute("open");
+  expect(details.querySelector("pre")?.textContent).toBe(diff);
+  fireEvent.click(screen.getByText("/work/index.html"));
+  expect(action).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "이번 요청 승인" })).toBeEnabled();
+});
+
 const approval: Approval = {
   id: "permission",
   taskId: "task",

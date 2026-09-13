@@ -1,12 +1,14 @@
 import { useState } from "react";
-import type { Approval } from "./types";
+import type { Approval, Task } from "./types";
 
 export function Approvals({
   items,
   action,
+  tasks = [],
 }: {
   items: Approval[];
   action: (path: string, data: unknown) => Promise<unknown>;
+  tasks?: Task[];
 }) {
   const [pending, setPending] = useState(false);
   const respond = (id: string, input: unknown) => {
@@ -39,7 +41,16 @@ export function Approvals({
                   ? "회사 공유 지식 제안"
                   : a.review?.title || "확인이 필요해요"}
           </strong>
-          <p>{a.params.reason || "직원이 다음 작업의 허가를 요청했습니다."}</p>
+          {tasks.some((task) => task.id === a.taskId) && (
+            <p className="approval-task">
+              대상 업무: {tasks.find((task) => task.id === a.taskId)?.title}
+            </p>
+          )}
+          <small>직원이 설명한 요청 목적</small>
+          <p>
+            {a.params.reason?.trim() ||
+              "목적 설명이 제공되지 않았습니다. 아래 실행 내용과 허용 범위를 확인해 주세요."}
+          </p>
           {a.method === "otter/knowledge" && (
             <>
               <h3>{a.params.title}</h3>
@@ -86,16 +97,31 @@ export function Approvals({
               </small>
             </>
           )}
-          {a.params.command && <pre>{a.params.command}</pre>}
+          {a.params.command && (
+            <>
+              <small>실행 명령 · 아래 내용이 승인 대상입니다</small>
+              <pre>{a.params.command}</pre>
+            </>
+          )}
           {a.params.grantRoot && (
             <p>추가 파일 접근 범위: {a.params.grantRoot}</p>
           )}
-          {a.params.changes?.map((change) => (
-            <details key={change.path} open>
-              <summary>{change.path}</summary>
-              <pre>{change.diff}</pre>
-            </details>
-          ))}
+          {!!a.params.changes?.length && (
+            <section className="approval-files" aria-label="변경할 파일">
+              <p>
+                파일 변경 {a.params.changes.length}개 · 파일을 펼쳐 변경 내용을
+                확인하세요.
+              </p>
+              {a.params.changes.map((change) => (
+                <details key={change.path}>
+                  <summary>{change.path}</summary>
+                  <pre tabIndex={0} aria-label={`${change.path} 변경 내용`}>
+                    {change.diff}
+                  </pre>
+                </details>
+              ))}
+            </section>
+          )}
           {a.params.cwd && <small>{a.params.cwd}</small>}
           {a.review && (
             <section aria-label="승인할 접근 범위">

@@ -73,6 +73,24 @@ try {
     prompt: "별도 프로젝트 결과",
   });
   app.store.update("tasks", other.id, { status: "completed" });
+  const failure =
+    JSON.stringify({
+      type: "error",
+      status: 400,
+      error: {
+        type: "invalid_request_error",
+        message:
+          "The 'fixture-model' model is not supported when using Codex with a ChatGPT account.",
+      },
+    }) + "\n명령 실행 여부를 확인한 뒤 이어가세요.";
+  app.store.update("tasks", tasks[2].id, { error: failure });
+  app.store.insert("reports", {
+    projectId: a.id,
+    taskId: tasks[2].id,
+    kind: "blocker",
+    title: "이전 모델 오류",
+    text: failure,
+  });
   const before = app.store.all("tasks");
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({
@@ -155,6 +173,28 @@ try {
     .boundingBox();
   assert.ok(emptyColumn && emptyColumn.height < 130);
   await board.screenshot({ path: join(directory, "task-board-mobile.png") });
+  await expect(
+    board.getByText("요청 당시 모델을 사용할 수 없다는 응답입니다."),
+  ).toBeVisible();
+  await expect(board.locator(".execution-error details")).not.toHaveAttribute(
+    "open",
+  );
+  await board.getByText("오류 원문 보기", { exact: true }).click();
+  assert.equal(
+    await board.locator(".execution-error pre").textContent(),
+    failure,
+  );
+  await board.getByRole("button", { name: "관련 보고 확인 →" }).click();
+  await expect(page.getByLabel("업무 범위")).toHaveValue(tasks[2].id);
+  await expect(
+    page.getByText("작성 당시 기록 · 현재 업무: 실패"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "직원 모델 설정 확인 →" }).click();
+  await expect(
+    page.locator("main").getByRole("heading", { name: "직원", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "☷ 업무", exact: true }).click();
+  await expect(status).toHaveValue("failed");
   await page.route("**/api/state**", (route) => route.abort());
   await expect(board.getByText(/마지막으로 확인한 업무/)).toBeVisible({
     timeout: 20000,
@@ -172,6 +212,7 @@ try {
       projectIsolation: true,
       unknownVisible: true,
       readOnly: true,
+      errorGuidance: true,
       offline: true,
       mobile: true,
     }),

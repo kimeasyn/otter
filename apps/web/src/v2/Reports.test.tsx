@@ -4,6 +4,23 @@ import { Reports } from "./Reports";
 import type { Assignment, Snapshot } from "./types";
 
 afterEach(cleanup);
+
+it("검토 대기 결과 보고에서만 기존 검토 동작을 제공한다", () => {
+  const action = vi.fn();
+  render(
+    <Reports
+      data={{
+        ...data,
+        tasks: data.tasks!.map((task) => ({ ...task, revision: 2 })),
+      }}
+      action={action}
+      onTask={() => {}}
+    />,
+  );
+  expect(screen.getAllByRole("button", { name: "검토 완료" })).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "검토 완료" })).toBeEnabled();
+  expect(action).not.toHaveBeenCalled();
+});
 const data: Snapshot = {
   companies: [],
   projects: [],
@@ -67,6 +84,9 @@ it("업무·종류·검색을 함께 적용하고 과거 보고와 현재 상태
     screen.getByText(/최근 확인한 업무: 로그인 · 검토 요청/),
   ).toBeVisible();
   expect(screen.getByText("별도 검증 · 실패")).toBeVisible();
+  expect(
+    screen.getAllByText("작성 당시 기록 · 현재 업무: 검토 요청"),
+  ).toHaveLength(2);
   fireEvent.change(screen.getByLabelText("보고 종류"), {
     target: { value: "blocker" },
   });

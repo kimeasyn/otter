@@ -220,6 +220,69 @@ try {
   await card.getByRole("button", { name: "거절" }).click();
   await expect.poll(() => provider.replies.length).toBe(5);
   assert.deepEqual(provider.replies[4].result, { decision: "cancel" });
+  provider.emit("notification", {
+    method: "item/started",
+    params: {
+      threadId: params.threadId,
+      turnId: params.turnId,
+      item: {
+        id: "files",
+        type: "fileChange",
+        changes: [
+          {
+            path: join(params.cwd, "index.html"),
+            kind: "add",
+            diff: "<p>전체 변경 내용</p>\n".repeat(500),
+          },
+        ],
+      },
+    },
+  });
+  provider.emit("request", {
+    id: 6,
+    method: "item/fileChange/requestApproval",
+    params: {
+      ...params,
+      itemId: "files",
+      permissions: undefined,
+    },
+  });
+  await page.getByRole("button", { name: /▦ 사무실/ }).click();
+  await page.getByRole("button", { name: "대화 크게 보기" }).click();
+  await expect(page.locator("main")).toBeHidden();
+  await expect(card).toContainText("파일 변경 1개");
+  await page.getByRole("button", { name: "대기 요청 1개 읽기 ↑" }).click();
+  const topVisible = await card.evaluate((element) => {
+    const parent = element.closest(".chat-messages");
+    return (
+      element.getBoundingClientRect().top >=
+        parent.getBoundingClientRect().top &&
+      element.getBoundingClientRect().top <
+        parent.getBoundingClientRect().bottom
+    );
+  });
+  assert.ok(topVisible, "요청 읽기는 승인 카드 시작점을 보여준다");
+  const details = card.locator(".approval-files details");
+  await expect(details).not.toHaveAttribute("open");
+  await details.locator("summary").click();
+  const diff = details.locator("pre");
+  await expect(diff).toBeVisible();
+  const dimensions = await diff.evaluate((element) => ({
+    height: element.clientHeight,
+    content: element.scrollHeight,
+  }));
+  assert.ok(dimensions.height <= 240 && dimensions.content > dimensions.height);
+  assert.equal(provider.replies.length, 5, "변경 내용 확인은 승인이 아니다");
+  await details.locator("summary").click();
+  await card.screenshot({ path: join(directory, "files-mobile.png") });
+  await card.getByRole("button", { name: "이번 요청 승인" }).click();
+  await expect.poll(() => provider.replies.length).toBe(6);
+  assert.deepEqual(provider.replies[5], {
+    id: 6,
+    result: { decision: "accept" },
+  });
+  await page.getByRole("button", { name: "사무실 함께 보기" }).click();
+  await expect(page.locator("main")).toBeVisible();
   assert.equal(
     app.store.all("approvals").filter((a) => a.status === "pending").length,
     0,
@@ -237,6 +300,7 @@ try {
         "영구 승인 미지원",
         "확인된 local 명령의 일회성 승인·미확인 환경 차단",
         "모바일",
+        "파일 목록 접기·전체 변경 내용 보존·대화 확대/복귀",
       ],
     }),
   );

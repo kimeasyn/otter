@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { Approvals } from "./Approvals";
+import { ExecutionError, type ErrorSettings } from "./ExecutionError";
 import { Verification } from "./Completion";
+import { Markdown } from "./Markdown";
+import { ReviewTask } from "./ReviewTask";
 import { statusNames, type Snapshot, type Task } from "./types";
 
 const kinds: Record<string, string> = {
@@ -18,11 +21,13 @@ export function Reports({
   initialTaskId = "",
   onTask,
   action,
+  onErrorSettings,
 }: {
   data: Snapshot;
   initialTaskId?: string;
   onTask: (task: Task) => void;
   action: (path: string, input: unknown) => Promise<unknown>;
+  onErrorSettings?: ErrorSettings;
 }) {
   const [taskId, setTaskId] = useState(initialTaskId);
   const [kind, setKind] = useState("");
@@ -120,7 +125,7 @@ export function Reports({
             보고 검색·종류 필터와 별개인 대기 요청입니다. 해당 요청의 허용
             여부는 따로 결정해 주세요.
           </p>
-          <Approvals items={approvals} action={action} />
+          <Approvals items={approvals} action={action} tasks={tasks} />
         </details>
       )}
       {filtered.map((r) => {
@@ -143,7 +148,24 @@ export function Reports({
                 </time>
               )}
             </p>
-            <p className="report-body">{r.text}</p>
+            {task && (
+              <p className="report-current-state">
+                작성 당시 기록 · 현재 업무:{" "}
+                {statusNames[task.status] || "상태 미확인"}
+              </p>
+            )}
+            {r.kind === "blocker" ? (
+              <ExecutionError
+                text={r.text}
+                onSettings={
+                  onErrorSettings
+                    ? (target) => onErrorSettings(target, task?.assignmentId)
+                    : undefined
+                }
+              />
+            ) : (
+              <Markdown text={r.text} />
+            )}
             {r.deployment && (
               <details>
                 <summary>실행한 배포 명령</summary>
@@ -178,6 +200,14 @@ export function Reports({
                   업무 대화 열기 →
                 </button>
               )}
+              {task?.status === "review" &&
+                r.kind === "result" &&
+                [...reports]
+                  .reverse()
+                  .find(
+                    (report) =>
+                      report.taskId === task.id && report.kind === "result",
+                  )?.id === r.id && <ReviewTask task={task} action={action} />}
             </footer>
           </article>
         );

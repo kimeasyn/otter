@@ -85,6 +85,10 @@ try {
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(app.origin);
   await page.getByRole("button", { name: "☷ 업무", exact: true }).click();
+  await page.getByRole("button", { name: "＋ 새 업무 맡기기" }).click();
+  await expect(page.getByLabel("업무 대화 선택")).toHaveValue("");
+  assert.equal(app.store.all("tasks", project.id).length, 2);
+  await page.getByRole("button", { name: "☷ 업무", exact: true }).click();
   await page
     .locator(".task-card")
     .filter({

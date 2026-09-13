@@ -26,6 +26,11 @@ export class CodexReadiness {
     this.makeCodex = makeCodex;
   }
   check() {
+    if (this.modelsPending)
+      throw new DomainError(
+        "모델 목록 조회 중입니다. 잠시 후 다시 확인해 주세요.",
+        409,
+      );
     if (!this.pending)
       this.pending = this.run().finally(() => {
         this.pending = null;
@@ -46,7 +51,89 @@ export class CodexReadiness {
   }
   async close() {
     await this.pending?.catch(() => {});
+    await this.modelsPending?.catch(() => {});
     await this.closeClient();
+  }
+  models() {
+    if (this.pending)
+      throw new DomainError(
+        "실행 준비 검사 중입니다. 잠시 후 다시 조회해 주세요.",
+        409,
+      );
+    if (!this.modelsPending)
+      this.modelsPending = this.readModels().finally(() => {
+        this.modelsPending = null;
+      });
+    return this.modelsPending;
+  }
+  async readModels() {
+    await this.closeClient();
+    const cwd = await mkdtemp(join(this.directory, "codex-models-"));
+    try {
+      this.client = this.makeCodex({ cwd, timeout: 10000 });
+      this.client.on("request", (request) => this.client.refuse(request.id));
+      await this.client.initialize();
+      const models = new Map();
+      const cursors = new Set();
+      const deadline = Date.now() + 15000;
+      let cursor;
+      for (let page = 0; page < 10; page++) {
+        if (Date.now() >= deadline) throw new Error("timeout");
+        const result = await this.client.request(
+          "model/list",
+          {
+            limit: 100,
+            includeHidden: false,
+            ...(cursor ? { cursor } : {}),
+          },
+          Math.min(10000, deadline - Date.now()),
+        );
+        if (!Array.isArray(result?.data) || result.data.length > 100)
+          throw new Error("invalid models");
+        for (const item of result.data) {
+          if (
+            !item ||
+            typeof item.model !== "string" ||
+            !item.model.trim() ||
+            item.model.length > 120 ||
+            /[\x00-\x1f]/.test(item.model)
+          )
+            throw new Error("invalid model");
+          if (item.hidden === true) continue;
+          models.set(item.model, {
+            model: item.model,
+            displayName:
+              typeof item.displayName === "string"
+                ? item.displayName.slice(0, 200)
+                : item.model,
+            isDefault: item.isDefault === true,
+          });
+        }
+        if (result.nextCursor == null)
+          return {
+            models: [...models.values()],
+            checkedAt: new Date().toISOString(),
+          };
+        if (
+          typeof result.nextCursor !== "string" ||
+          !result.nextCursor ||
+          result.nextCursor.length > 4096 ||
+          cursors.has(result.nextCursor)
+        )
+          throw new Error("invalid cursor");
+        cursor = result.nextCursor;
+        cursors.add(cursor);
+      }
+      throw new Error("too many models");
+    } catch {
+      throw new DomainError(
+        "모델 목록을 조회하지 못했습니다. 이 실행 환경의 Codex 설치·로그인·버전·네트워크를 확인해 주세요. 기존 모델 값은 유지되며 직접 입력할 수 있습니다.",
+        503,
+      );
+    } finally {
+      await this.closeClient();
+      await rmdir(cwd).catch(() => {});
+    }
   }
   async run() {
     await this.closeClient();

@@ -3,6 +3,19 @@ import { repository, createRepository } from "./git.mjs";
 import { initialInstructions } from "./instructions.mjs";
 import { completionPolicy } from "./verification.mjs";
 
+const appearance = (
+  input,
+  fallback = { avatar: "default", color: "#5a7be9" },
+) => ({
+  avatar: choice(
+    input.avatar ?? input.appearance?.avatar ?? fallback.avatar,
+    ["default", "glasses", "bob", "curly", "cap", "headset"],
+    "아바타",
+  ),
+  color: /^#[0-9a-f]{6}$/i.test(input.appearance?.color || "")
+    ? input.appearance.color
+    : fallback.color,
+});
 const employeeFields = (input) => ({
   name: required(input.name, "직원 이름", 80),
   role: required(input.role, "역할", 120),
@@ -43,7 +56,7 @@ export class Company {
             }
           : {
               ...employeeFields(value),
-              appearance: { avatar: "default", color: "#5a7be9" },
+              appearance: appearance(value),
               sourceId: value.sourceId || null,
               sourceRevision: value.sourceRevision || null,
               sourceSnapshot: value.sourceSnapshot
@@ -214,7 +227,7 @@ export class Company {
       sourceId: source?.id ?? null,
       sourceRevision: source?.revision ?? null,
       sourceSnapshot: source ? employeeFields(source) : null,
-      appearance: { avatar: "default", color: "#5a7be9" },
+      appearance: appearance(input, source?.appearance),
     });
   }
   editEmployee(id, input) {
@@ -226,7 +239,13 @@ export class Company {
     return this.store.update(
       "employees",
       id,
-      employeeFields(input),
+      {
+        ...employeeFields(input),
+        appearance: appearance(
+          input,
+          this.store.get("employees", id).appearance,
+        ),
+      },
       input.revision,
     );
   }
@@ -283,7 +302,13 @@ export class Company {
     return this.store.update(
       "assignments",
       id,
-      { settings: employeeFields(input) },
+      {
+        settings: employeeFields(input),
+        appearance: appearance(
+          input,
+          this.store.get("assignments", id).appearance,
+        ),
+      },
       input.revision,
     );
   }
@@ -335,6 +360,20 @@ export class Company {
       {
         title: required(input.title, "문서 제목", 120),
         content: input.content,
+      },
+      input.revision,
+    );
+  }
+  editTask(id, input) {
+    const task = this.store.get("tasks", id);
+    this.checkProjectLock(task.projectId);
+    if (!Number.isInteger(input.revision))
+      throw new DomainError("최신 업무 버전을 확인해 주세요.", 409);
+    return this.store.update(
+      "tasks",
+      id,
+      {
+        title: required(input.title, "업무 제목", 80),
       },
       input.revision,
     );

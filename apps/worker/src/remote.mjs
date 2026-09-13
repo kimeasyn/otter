@@ -658,6 +658,7 @@ export class Environments {
         /^\/api\/requests\/[a-zA-Z0-9_-]{8,128}$/.test(route)
       ) &&
       !(method === "POST" && route === "/api/codex-check") &&
+      !(method === "GET" && route === "/api/codex-models") &&
       !(["GET", "POST"].includes(method) && route === "/api/codex-settings")
     )
       throw new DomainError("원격 전달이 허용되지 않은 경로입니다.", 403);

@@ -94,7 +94,7 @@ it("말풍선은 대기 중인 승인의 정확한 업무로 연결하고 직원
   expect(open).toHaveBeenLastCalledWith(tasks[0]);
   expect(select).not.toHaveBeenCalled();
   expect(screen.getByText("진행·대기 2개")).toBeVisible();
-  expect(screen.getByText(/확인할 업무 1개/)).toBeVisible();
+  expect(screen.getByText(/질문·승인·검토 대기 1개/)).toBeVisible();
   expect(screen.queryByText("다른 팀 업무")).not.toBeInTheDocument();
   fireEvent.click(
     screen.getByRole("button", { name: "김코딩, 검토 요청, 대화 열기" }),

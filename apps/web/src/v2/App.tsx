@@ -10,8 +10,13 @@ import {
   type Task,
 } from "./types";
 import { Avatar, Office } from "./Office";
+import { AvatarPicker } from "./AvatarPicker";
 import { Reports } from "./Reports";
+import { ModelPicker } from "./ModelPicker";
+import { ExecutionError, type ErrorSettings } from "./ExecutionError";
 import { ReviewTask } from "./ReviewTask";
+import { Markdown } from "./Markdown";
+import { TaskTitle } from "./TaskTitle";
 import { RecordBackup } from "./RecordBackup";
 import { Approvals } from "./Approvals";
 import { Staff } from "./Staff";
@@ -53,29 +58,114 @@ const emptyTaskFilters: TaskFilters = { search: "", owner: "", status: "" };
 const fields = (form: HTMLFormElement) =>
   Object.fromEntries(new FormData(form));
 
+const navigationKey = "otter:v2:navigation";
+function readNavigation() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(navigationKey) || "{}");
+    return {
+      projectId: typeof saved.projectId === "string" ? saved.projectId : "",
+      page: pages.some(([key]) => key === saved.page)
+        ? (saved.page as Page)
+        : ("office" as Page),
+      selected: typeof saved.selected === "string" ? saved.selected : "",
+      taskId: typeof saved.taskId === "string" ? saved.taskId : "",
+      channel:
+        saved.channel === "project"
+          ? ("project" as const)
+          : saved.channel === "team"
+            ? ("team" as const)
+            : ("direct" as const),
+      expanded: saved.expanded === true,
+    };
+  } catch {
+    return {
+      projectId: "",
+      page: "office" as Page,
+      selected: "",
+      taskId: "",
+      channel: "direct" as const,
+      expanded: false,
+    };
+  }
+}
+
 export function AppV2() {
-  const [projectId, setProjectId] = useState("");
-  const [page, setPage] = useState<Page>("office");
-  const [selected, setSelected] = useState("");
+  const [initialNavigation] = useState(readNavigation);
+  const [projectId, setProjectId] = useState(initialNavigation.projectId);
+  const [page, setPage] = useState<Page>(initialNavigation.page);
+  const [selected, setSelected] = useState(initialNavigation.selected);
+  const [chatExpanded, setChatExpanded] = useState(initialNavigation.expanded);
+  const [workspaceMenu, setWorkspaceMenu] = useState(false);
+  const [editorRequest, setEditorRequest] = useState({
+    assignmentId: "",
+    sequence: 0,
+  });
+  const [chatSelection, setChatSelection] = useState({
+    taskId: initialNavigation.taskId,
+    channel: initialNavigation.channel,
+  });
   const [taskFilters, setTaskFilters] = useState({
     projectId: "",
     value: emptyTaskFilters,
   });
-  const [chatTarget, setChatTarget] = useState({ taskId: "", revision: 0 });
+  const [chatTarget, setChatTarget] = useState({
+    taskId: initialNavigation.taskId,
+    revision: 0,
+  });
   const [reportTarget, setReportTarget] = useState({
     projectId: "",
     taskId: "",
     revision: 0,
   });
-  const focusTask = chatTarget.taskId;
-  const setFocusTask = (taskId: string) =>
+  const focusTask = chatSelection.taskId;
+  useEffect(() => {
+    if (
+      page === "office" &&
+      chatTarget.revision > 0 &&
+      window.matchMedia("(max-width: 930px)").matches
+    )
+      document
+        .getElementById("project-chat")
+        ?.scrollIntoView({ block: "start" });
+  }, [page, chatTarget.revision]);
+  const setFocusTask = (
+    taskId: string,
+    channel: "direct" | "project" = "direct",
+  ) => {
     setChatTarget((current) => ({ taskId, revision: current.revision + 1 }));
+    setChatSelection({ taskId, channel });
+  };
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(
+        navigationKey,
+        JSON.stringify({
+          projectId,
+          page,
+          selected,
+          ...chatSelection,
+          expanded: chatExpanded,
+        }),
+      );
+    } catch {
+      /* 탐색 위치 저장 실패는 작업을 막지 않는다. */
+    }
+  }, [projectId, page, selected, chatSelection, chatExpanded]);
   const [modal, setModal] = useState<
     "project" | "employee" | "environment" | null
   >(null);
   const [error, setError] = useState("");
   const [pendingActions, setPendingActions] = useState(0);
   const busy = pendingActions > 0;
+  const openErrorSettings: ErrorSettings = (target, assignmentId) => {
+    if (target === "staff") {
+      setEditorRequest((current) => ({
+        assignmentId: assignmentId || member?.id || "",
+        sequence: current.sequence + 1,
+      }));
+      setPage("staff");
+    } else setModal("environment");
+  };
   const draftStorageError = useDraftStorageError();
   const client = useQueryClient();
   const query = useQuery({
@@ -102,11 +192,17 @@ export function AppV2() {
     project?.stage === "idea"
       ? team.find((a) => a.id === project.pmAssignmentId)
       : team.find((a) => a.id === selected) || team[0];
-  const focusedTask = tasks.find(
-    (task) => task.id === focusTask && task.assignmentId === member?.id,
-  );
+  const focusedTask = tasks.find((task) => task.id === focusTask);
   useEffect(() => {
-    if (data && !projectId && projects.length) setProjectId(projects[0].id);
+    if (
+      data &&
+      (projectId || projects.length) &&
+      !projects.some((p) => p.id === projectId)
+    ) {
+      setProjectId(projects[0]?.id || "");
+      setSelected("");
+      setFocusTask("");
+    }
   }, [data, projectId, projects]);
   const action: Action = async (path, input, environment) => {
     setPendingActions((count) => count + 1);
@@ -143,7 +239,8 @@ export function AppV2() {
       return;
     }
     setSelected(task.assignmentId);
-    setFocusTask(task.id);
+    setFocusTask(task.id, task.channel === "project" ? "project" : "direct");
+    setChatExpanded(true);
     setPage("office");
   };
   const openReports = (taskId = "") => {
@@ -156,7 +253,9 @@ export function AppV2() {
   };
   return (
     <div className="otter-app">
-      <aside className="app-sidebar">
+      <aside
+        className={`app-sidebar ${workspaceMenu ? "workspace-menu-open" : ""}`}
+      >
         <a
           className="brand"
           href="#"
@@ -170,37 +269,52 @@ export function AppV2() {
           </span>
           otter<span className="beta">PREVIEW</span>
         </a>
-        <label className="company-picker">
-          내 작업공간
-          <select
-            aria-label="프로젝트 선택"
-            value={projectId}
-            onChange={(e) => {
-              setProjectId(e.target.value);
-              setSelected("");
-              setFocusTask("");
-            }}
-          >
-            <option value="" disabled>
-              프로젝트 선택
-            </option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-                {p.stage === "idea" ? " · 구상 중" : ""}
-                {p.environmentId && p.environmentId !== "local"
-                  ? ` · ${p.environmentLabel}`
-                  : ""}
+        <button
+          className="workspace-menu-toggle"
+          aria-expanded={workspaceMenu}
+          aria-controls="workspace-controls"
+          onClick={() => setWorkspaceMenu(!workspaceMenu)}
+          aria-label="작업공간 메뉴"
+        >
+          ☰
+        </button>
+        <div id="workspace-controls" className="workspace-controls">
+          <label className="company-picker">
+            내 작업공간
+            <select
+              aria-label="프로젝트 선택"
+              value={projectId}
+              onChange={(e) => {
+                setProjectId(e.target.value);
+                setSelected("");
+                setFocusTask("");
+                setWorkspaceMenu(false);
+              }}
+            >
+              <option value="" disabled>
+                프로젝트 선택
               </option>
-            ))}
-          </select>
-        </label>
-        <button className="new-project" onClick={() => setModal("project")}>
-          ＋ 프로젝트 시작
-        </button>
-        <button className="new-project" onClick={() => setModal("environment")}>
-          ⌁ 실행 환경
-        </button>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.stage === "idea" ? " · 구상 중" : ""}
+                  {p.environmentId && p.environmentId !== "local"
+                    ? ` · ${p.environmentLabel}`
+                    : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="new-project" onClick={() => setModal("project")}>
+            ＋ 프로젝트 시작
+          </button>
+          <button
+            className="new-project"
+            onClick={() => setModal("environment")}
+          >
+            ⌁ 실행 환경
+          </button>
+        </div>
         <nav aria-label="주 메뉴">
           {pages.map(([key, icon, label]) => (
             <button
@@ -231,6 +345,19 @@ export function AppV2() {
             <span>/</span>
             <strong>{project?.name || "시작하기"}</strong>
           </div>
+          {project && data && (
+            <details className="project-actions">
+              <summary>프로젝트 작업</summary>
+              <div className="project-actions-popover">
+                <PushProject project={project} />
+                <DeployProject project={project} />
+                <EditorLink
+                  project={project}
+                  environments={data.environments}
+                />
+              </div>
+            </details>
+          )}
           <div
             className={`connection ${query.isError || data?.connectionError ? "offline" : ""}`}
           >
@@ -377,12 +504,29 @@ export function AppV2() {
                   </p>
                 </div>
                 <div className="button-row">
-                  <PushProject project={project} />
-                  <DeployProject project={project} />
-                  <EditorLink
-                    project={project}
-                    environments={data.environments}
-                  />
+                  {page === "tasks" && project.stage !== "idea" && (
+                    <button
+                      className="primary"
+                      onClick={() => {
+                        if (!team.length) {
+                          setModal("employee");
+                          return;
+                        }
+                        setFocusTask("");
+                        setPage("office");
+                      }}
+                    >
+                      ＋ 새 업무 맡기기
+                    </button>
+                  )}
+                  {page === "office" && (
+                    <button
+                      className="chat-jump"
+                      onClick={() => setChatExpanded(true)}
+                    >
+                      대화 크게 보기 ↗
+                    </button>
+                  )}
                   {["office", "staff"].includes(page) && (
                     <button
                       className="primary"
@@ -466,6 +610,8 @@ export function AppV2() {
                   approvals={data.approvals}
                   action={action}
                   onOpen={openTask}
+                  onReports={openReports}
+                  onErrorSettings={openErrorSettings}
                   filters={
                     taskFilters.projectId === project.id
                       ? taskFilters.value
@@ -479,7 +625,11 @@ export function AppV2() {
               )}
               {page === "staff" && (
                 <Staff
-                  key={project.id}
+                  key={`${project.environmentId || "local"}:${project.id}`}
+                  projectId={project.id}
+                  editorRequest={editorRequest}
+                  environment={project.environmentId}
+                  environmentLabel={project.environmentLabel}
                   data={data}
                   action={action}
                   onChat={(id) => {
@@ -511,6 +661,7 @@ export function AppV2() {
               )}
               {page === "reports" && (
                 <Reports
+                  onErrorSettings={openErrorSettings}
                   key={project.id + reportTarget.revision}
                   data={data}
                   initialTaskId={
@@ -656,6 +807,10 @@ export function AppV2() {
             </main>
             {page === "office" && (
               <Chat
+                expanded={chatExpanded}
+                onExpandedChange={setChatExpanded}
+                onSelectionChange={setChatSelection}
+                onErrorSettings={openErrorSettings}
                 key={
                   (member?.id || "empty") + chatTarget.revision + project.stage
                 }
@@ -666,16 +821,17 @@ export function AppV2() {
                 busy={busy}
                 onReports={openReports}
                 onTask={openTask}
-                initialChannel={
-                  focusedTask?.channel === "project" ? "project" : "direct"
-                }
+                initialChannel={chatSelection.channel}
                 initialTaskId={
                   focusedTask
                     ? focusedTask.id
-                    : project.stage === "idea"
-                      ? [...tasks].reverse().find((t) => t.mode === "interview")
-                          ?.id || ""
-                      : ""
+                    : tasks.some((task) => task.id === chatSelection.taskId)
+                      ? chatSelection.taskId
+                      : project.stage === "idea"
+                        ? [...tasks]
+                            .reverse()
+                            .find((t) => t.mode === "interview")?.id || ""
+                        : ""
                 }
               />
             )}
@@ -740,6 +896,8 @@ export function TaskBoard({
   approvals,
   action,
   onOpen,
+  onReports,
+  onErrorSettings,
   filters,
   onFilters,
   stale = false,
@@ -751,6 +909,8 @@ export function TaskBoard({
   approvals?: Snapshot["approvals"];
   action: Action;
   onOpen: (task: Task) => void;
+  onReports?: (taskId: string) => void;
+  onErrorSettings?: ErrorSettings;
   filters: TaskFilters;
   onFilters: (filters: TaskFilters) => void;
   stale?: boolean;
@@ -903,6 +1063,10 @@ export function TaskBoard({
                   void action(path, input).catch(() => {});
                 }}
                 onOpen={() => onOpen(task)}
+                onReports={onReports ? () => onReports(task.id) : undefined}
+                onErrorSettings={(target) =>
+                  onErrorSettings?.(target, task.assignmentId)
+                }
                 pendingApproval={pending.has(task.id)}
               />
             ))}
@@ -922,6 +1086,8 @@ function TaskCard({
   team,
   perform,
   onOpen,
+  onReports,
+  onErrorSettings,
   environment,
   action,
   pendingApproval = false,
@@ -932,6 +1098,8 @@ function TaskCard({
   team: Assignment[];
   perform: (path: string, input: unknown) => void;
   onOpen: () => void;
+  onReports?: () => void;
+  onErrorSettings?: ErrorSettings;
   environment?: string;
   action: Action;
   pendingApproval?: boolean;
@@ -975,7 +1143,14 @@ function TaskCard({
             : ""}
         </small>
       )}
-      {task.error && <p role="alert">{task.error}</p>}
+      {task.error && (
+        <ExecutionError text={task.error} onSettings={onErrorSettings} />
+      )}
+      {task.error && onReports && (
+        <button type="button" onClick={onReports}>
+          관련 보고 확인 →
+        </button>
+      )}
       {task.acceptedBy === "verification" && (
         <small>완료 판정: 지정 검증 통과 · Git 반영 상태는 별도</small>
       )}
@@ -1047,7 +1222,11 @@ export function Chat({
   initialTaskId,
   onReports,
   onTask,
+  onErrorSettings,
   initialChannel = "direct",
+  expanded: controlledExpanded,
+  onExpandedChange,
+  onSelectionChange,
 }: {
   member?: Assignment;
   data: Snapshot;
@@ -1057,7 +1236,14 @@ export function Chat({
   initialTaskId: string;
   onReports: (taskId: string) => void;
   onTask: (task: Task) => void;
-  initialChannel?: "direct" | "project";
+  onErrorSettings?: ErrorSettings;
+  initialChannel?: "direct" | "project" | "team";
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+  onSelectionChange?: (selection: {
+    taskId: string;
+    channel: "direct" | "project" | "team";
+  }) => void;
 }) {
   const interview =
     data.projects.find((p) => p.id === projectId)?.stage === "idea";
@@ -1065,6 +1251,16 @@ export function Chat({
   const [channel, setChannel] = useState<"direct" | "project" | "team">(
     initialChannel,
   );
+  const [localExpanded, setLocalExpanded] = useState(false);
+  const expanded = controlledExpanded ?? localExpanded;
+  const setExpanded = onExpandedChange ?? setLocalExpanded;
+  useEffect(() => {
+    onSelectionChange?.({
+      taskId,
+      channel,
+    });
+  }, [taskId, channel, onSelectionChange]);
+  const composer = useRef<HTMLTextAreaElement>(null);
   const tasks = (data.tasks || []).filter((t) => t.assignmentId === member?.id);
   const selectedTask = (
     channel === "direct" ? tasks : channel === "project" ? data.tasks || [] : []
@@ -1128,6 +1324,7 @@ export function Chat({
     activeDraftKey.current = key;
   }, [key]);
   const bottom = useRef<HTMLDivElement>(null);
+  const approvalStart = useRef<HTMLDivElement>(null);
   const taskPicker = useRef<HTMLSelectElement>(null);
   const messages = (data.messages || []).filter(
     (m) =>
@@ -1164,10 +1361,14 @@ export function Chat({
     }
   }, [initialTaskId]);
   return (
-    <aside className="chat-panel">
+    <aside
+      id="project-chat"
+      className={`chat-panel ${expanded ? "expanded" : ""}`}
+      aria-label="팀 대화"
+    >
       <header>
         <div className="chat-person">
-          <Avatar color={recipient?.appearance.color} />
+          <Avatar {...recipient?.appearance} />
           <div>
             <h2>
               {channel === "team"
@@ -1192,8 +1393,50 @@ export function Chat({
               ? "프로젝트"
               : "직원 간"}
         </span>
+        <button
+          type="button"
+          className="chat-view-toggle"
+          aria-pressed={expanded}
+          onClick={(event) => {
+            setExpanded(!expanded);
+            event.currentTarget
+              .closest("aside")
+              ?.scrollIntoView({ block: "start" });
+          }}
+        >
+          {expanded ? "사무실 함께 보기" : "대화 크게 보기"}
+        </button>
       </header>
       <div className="chat-filter">
+        {!!approvals.length && (
+          <button
+            type="button"
+            className="approval-jump"
+            onClick={() => {
+              const target = approvalStart.current;
+              const container = target?.parentElement;
+              if (target && container)
+                container.scrollTop +=
+                  target.getBoundingClientRect().top -
+                  container.getBoundingClientRect().top;
+            }}
+          >
+            대기 요청 {approvals.length}개 읽기 ↑
+          </button>
+        )}
+        {channel !== "team" && (
+          <button
+            type="button"
+            className="new-task-button"
+            disabled={!member || busy}
+            onClick={() => {
+              setTaskId("");
+              composer.current?.focus({ preventScroll: true });
+            }}
+          >
+            ＋ 새 업무 요청
+          </button>
+        )}
         <div className="chat-tabs" aria-label="대화 종류">
           {(
             [
@@ -1223,7 +1466,8 @@ export function Chat({
           }}
         >
           <option value="">
-            모든 업무 대화{drafts[keyForTask("")]?.text ? " · 초안" : ""}
+            모든 업무 대화{channel !== "team" ? " · 새 업무 작성" : ""}
+            {drafts[keyForTask("")]?.text ? " · 초안" : ""}
           </option>
           {(channel === "direct" ? tasks : data.tasks || []).map((t) => (
             <option key={t.id} value={t.id}>
@@ -1236,14 +1480,24 @@ export function Chat({
       <div className="chat-messages">
         {selectedTask && (
           <section className="chat-task-context" aria-label="선택한 업무 상태">
+            <TaskTitle
+              key={selectedTask.id}
+              task={selectedTask}
+              action={action}
+            />
             <strong>
               업무 상태 · {statusNames[selectedTask.status] || "상태 미확인"}
             </strong>
             {selectedTask.error && (
-              <details>
-                <summary>확인할 내용</summary>
-                <p>{selectedTask.error}</p>
-              </details>
+              <ExecutionError
+                text={selectedTask.error}
+                onSettings={(target) =>
+                  onErrorSettings?.(target, selectedTask.assignmentId)
+                }
+              />
+            )}
+            {selectedTask.status === "review" && (
+              <ReviewTask task={selectedTask} action={action} />
             )}
             {(data.reports || []).some((r) => r.taskId === selectedTask.id) ? (
               <button type="button" onClick={() => onReports(selectedTask.id)}>
@@ -1296,7 +1550,7 @@ export function Chat({
         )}
         {!messages.length && (
           <div className="chat-intro">
-            <Avatar color={recipient?.appearance.color} />
+            <Avatar {...recipient?.appearance} />
             <h3>
               {selectedTask
                 ? "이 대화방에는 해당 업무의 메시지가 없습니다."
@@ -1330,7 +1584,7 @@ export function Chat({
               {m.kind === "handoff" ? " · 업무 인계" : ""}
               {m.kind === "steering" ? " · 추가 지시" : ""}
             </span>
-            <p>{m.text}</p>
+            <Markdown text={m.text} />
             <time>
               {new Date(m.createdAt).toLocaleTimeString("ko-KR", {
                 hour: "2-digit",
@@ -1350,7 +1604,9 @@ export function Chat({
             </time>
           </div>
         ))}
-        <Approvals items={approvals} action={action} />
+        <div ref={approvalStart}>
+          <Approvals items={approvals} action={action} tasks={data.tasks} />
+        </div>
         <div ref={bottom} />
       </div>
       {channel !== "team" && (
@@ -1425,6 +1681,7 @@ export function Chat({
             </label>
           )}
           <textarea
+            ref={composer}
             aria-label="직원에게 업무 요청"
             placeholder={
               recipient
@@ -2120,14 +2377,15 @@ function ProjectForm({
                     maxLength={80}
                   />
                 </label>
-                <label>
-                  PM 모델
-                  <input
-                    name="pmModel"
-                    placeholder="비우면 설치된 Codex 기본 모델"
-                    maxLength={120}
-                  />
-                </label>
+                <ModelPicker
+                  name="pmModel"
+                  label="PM 모델"
+                  environment={environment}
+                  environmentLabel={
+                    data.environments?.find((item) => item.id === environment)
+                      ?.name
+                  }
+                />
                 <label>
                   PM 지침
                   <textarea
@@ -2255,6 +2513,7 @@ function EmployeeForm({
         )}
         {!existing && (
           <>
+            <AvatarPicker />
             <div className="form-grid">
               <label>
                 이름
@@ -2265,13 +2524,14 @@ function EmployeeForm({
                 <input required name="role" placeholder="백엔드 개발" />
               </label>
             </div>
-            <label>
-              Codex 모델
-              <input
-                name="model"
-                placeholder="비워두면 설치된 Codex의 기본 모델"
-              />
-            </label>
+            <ModelPicker
+              environment={
+                data.projects.find((p) => p.id === projectId)?.environmentId
+              }
+              environmentLabel={
+                data.projects.find((p) => p.id === projectId)?.environmentLabel
+              }
+            />
             <label>
               일하는 방식과 지침
               <textarea
